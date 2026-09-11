@@ -210,6 +210,7 @@
     <div class="scanner-viewport"><video id="scannerVideo" autoplay playsinline muted></video><canvas id="scannerCanvas"></canvas><div class="scanner-guide"></div></div>
     <div class="scanner-hint" id="scannerHint">枠の中に、バーコードを横向きで合わせてください</div>
     <button type="button" id="scannerShareBtn" class="btn small" style="margin-top:10px;display:none">📤 画像を共有</button>
+    <button type="button" id="scannerManualShareBtn" class="btn secondary small" style="margin-top:10px;display:none">📷 今の映像を保存（失敗中でもOK）</button>
   </div>
 </div>
 
@@ -495,6 +496,7 @@ async function openScanner(onDetected){
   lastSnapshotFile = null;
   lastSnapshotCode = null;
   document.getElementById("scannerShareBtn").style.display = "none";
+  document.getElementById("scannerManualShareBtn").style.display = DEBUG_MODE ? "" : "none";
   setScannerHint("カメラを起動しています…");
   try{
     var ZXing = await loadZXing();
@@ -575,6 +577,11 @@ async function shareSnapshot(file, code){
 }
 document.getElementById("scannerShareBtn").addEventListener("click", function(){
   shareSnapshot(lastSnapshotFile, lastSnapshotCode);
+});
+document.getElementById("scannerManualShareBtn").addEventListener("click", function(){
+  captureSnapshot("manual", function(file){
+    shareSnapshot(file, "手動保存（読み取り中/失敗中の映像）");
+  });
 });
 
 function handleBarcodeDetected(code){
