@@ -493,6 +493,7 @@ async function openScanner(onDetected){
   overlay.hidden = false;
   clearDetectionBox();
   lastSnapshotFile = null;
+  lastSnapshotCode = null;
   document.getElementById("scannerShareBtn").style.display = "none";
   setScannerHint("カメラを起動しています…");
   try{
@@ -535,6 +536,7 @@ async function openScanner(onDetected){
   }
 }
 var lastSnapshotFile = null;
+var lastSnapshotCode = null;
 var DEBUG_MODE = location.search.indexOf("debug=1") !== -1;
 
 function captureSnapshot(code, cb){
@@ -551,11 +553,11 @@ function captureSnapshot(code, cb){
     }, "image/jpeg", 0.85);
   }catch(e){ cb(null); }
 }
-async function shareSnapshot(file){
+async function shareSnapshot(file, code){
   if(!file) return;
   if(navigator.canShare && navigator.canShare({ files: [file] })){
     try{
-      await navigator.share({ files: [file], title: "NutriStockバーコードスキャン画像" });
+      await navigator.share({ files: [file], title: "NutriStockバーコードスキャン画像", text: "JAN: " + code });
       console.log("[NutriStock] 共有シートで送信/保存しました:", file.name);
       return;
     }catch(e){
@@ -572,7 +574,7 @@ async function shareSnapshot(file){
   console.log("[NutriStock] 画像をダウンロードしました:", file.name);
 }
 document.getElementById("scannerShareBtn").addEventListener("click", function(){
-  shareSnapshot(lastSnapshotFile);
+  shareSnapshot(lastSnapshotFile, lastSnapshotCode);
 });
 
 function handleBarcodeDetected(code){
@@ -592,6 +594,7 @@ function handleBarcodeDetected(code){
   if(!DEBUG_MODE){ setTimeout(proceed, 550); return; }
   captureSnapshot(code, function(file){
     lastSnapshotFile = file;
+    lastSnapshotCode = code;
     if(file) document.getElementById("scannerShareBtn").style.display = "";
     setTimeout(proceed, 4000); /* debug mode: leave more time to tap "share" before auto-continuing */
   });
@@ -601,6 +604,7 @@ function closeScanner(){
   try{ if(zxingReader){ zxingReader.reset(); } }catch(e){}
   clearDetectionBox();
   lastSnapshotFile = null;
+  lastSnapshotCode = null;
   document.getElementById("scannerShareBtn").style.display = "none";
   var overlay = document.getElementById("scannerOverlay");
   if(overlay) overlay.hidden = true;
