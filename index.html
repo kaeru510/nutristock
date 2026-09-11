@@ -208,7 +208,7 @@
   <div class="scanner-box">
     <div class="scanner-head"><span>バーコードをスキャン</span><button type="button" id="scannerClose" class="btn ghost small">閉じる</button></div>
     <div class="scanner-viewport"><video id="scannerVideo" autoplay playsinline muted></video><canvas id="scannerCanvas"></canvas><div class="scanner-guide"></div></div>
-    <div class="scanner-hint" id="scannerHint">枠の中に、バーコードを横向きで合わせてください</div>
+    <div class="scanner-hint" id="scannerHint">枠の中に。真正面だと読めないことが多いので、少し斜めに傾けてみてください</div>
     <button type="button" id="scannerShareBtn" class="btn small" style="margin-top:10px;display:none">📤 画像を共有</button>
     <button type="button" id="scannerManualShareBtn" class="btn secondary small" style="margin-top:10px;display:none">📷 今の映像を保存（失敗中でもOK）</button>
   </div>
@@ -501,18 +501,10 @@ async function openScanner(onDetected){
   try{
     var ZXing = await loadZXing();
     var hints = new Map();
-    /* broadened to match a reference implementation that reads noticeably more reliably;
-       results are filtered to EAN_13 only below, since a broader multi-format hint set
-       seems to change ZXing's internal per-row read persistence, not just which formats
-       it recognizes */
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E,
-      ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39, ZXing.BarcodeFormat.CODE_93,
-      ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.CODABAR,
-      ZXing.BarcodeFormat.QR_CODE, ZXing.BarcodeFormat.DATA_MATRIX,
-      ZXing.BarcodeFormat.PDF_417, ZXing.BarcodeFormat.AZTEC
-    ]);
+    /* tried broadening this to match a reference implementation's hint set, on the theory
+       that it changes ZXing's internal per-row read persistence — it didn't change the
+       straight-on failure, so narrowed back to just what this feature actually needs */
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
     hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
     zxingReader = new ZXing.BrowserMultiFormatReader(hints);
     scannerActive = true;
@@ -543,7 +535,7 @@ async function openScanner(onDetected){
       }
     ).then(function(){
       console.log("[NutriStock] カメラ起動成功、読み取り待機中…");
-      setScannerHint("枠の中に、バーコードを横向きで合わせてください");
+      setScannerHint("枠の中に。真正面だと読めないことが多いので、少し斜めに傾けてみてください");
     }).catch(function(err){
       var detail = err && (err.name || err.message) ? (err.name||"")+" "+(err.message||"") : "";
       setScannerHint("カメラを起動できませんでした。権限が許可されているか確認してください。" + (detail ? "（"+detail+"）" : ""));
