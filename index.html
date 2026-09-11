@@ -207,7 +207,7 @@
 <div class="scanner-overlay" id="scannerOverlay" hidden>
   <div class="scanner-box">
     <div class="scanner-head"><span>バーコードをスキャン</span><button type="button" id="scannerClose" class="btn ghost small">閉じる</button></div>
-    <div class="scanner-viewport"><video id="scannerVideo" autoplay playsinline muted></video><canvas id="scannerCanvas"></canvas><div class="scanner-guide"></div></div>
+    <div class="scanner-viewport"><video id="scannerVideo"></video><canvas id="scannerCanvas"></canvas><div class="scanner-guide"></div></div>
     <div class="scanner-hint" id="scannerHint">枠の中に。真正面だと読めないことが多いので、少し斜めに傾けてみてください</div>
     <button type="button" id="scannerShareBtn" class="btn small" style="margin-top:10px;display:none">📤 画像を共有</button>
     <button type="button" id="scannerManualShareBtn" class="btn secondary small" style="margin-top:10px;display:none">📷 今の映像を保存（失敗中でもOK）</button>
@@ -512,9 +512,8 @@ async function openScanner(onDetected){
     try{
       var devices = await zxingReader.listVideoInputDevices();
       var back = devices && devices.find(function(d){ return /back|rear|environment/i.test(d.label); });
-      /* only trust an explicit back-camera label match; otherwise let the facingMode fallback below decide
-         (device labels are blank before the first permission grant, so guessing devices[0] here could pick the front camera) */
-      deviceId = back ? back.deviceId : undefined;
+      var chosen = back || (devices && devices[0]);
+      deviceId = chosen ? chosen.deviceId : undefined;
     }catch(e){ deviceId = undefined; }
     zxingReader.decodeFromVideoDevice(
       deviceId,
