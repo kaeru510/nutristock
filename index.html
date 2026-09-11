@@ -163,7 +163,7 @@
   .scanner-viewport{position:relative;width:100%;background:#111;border-radius:10px;overflow:hidden;line-height:0}
   .scanner-viewport video{width:100%;height:auto;display:block}
   .scanner-viewport canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-  .scanner-guide{position:absolute;left:8%;right:8%;top:38%;height:24%;border:2px solid rgba(255,255,255,.9);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none}
+  .scanner-guide{position:absolute;top:8%;bottom:8%;left:38%;width:24%;border:2px solid rgba(255,255,255,.9);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none}
   .scanner-hint{font-size:12px;color:var(--ink-3);margin-top:8px;text-align:center}
   .barcode-note{font-size:11.5px;color:var(--accent-soft-ink);background:var(--accent-soft);border-radius:8px;padding:8px 10px;margin-top:2px}
 
@@ -208,7 +208,7 @@
   <div class="scanner-box">
     <div class="scanner-head"><span>バーコードをスキャン</span><button type="button" id="scannerClose" class="btn ghost small">閉じる</button></div>
     <div class="scanner-viewport"><video id="scannerVideo"></video><canvas id="scannerCanvas"></canvas><div class="scanner-guide"></div></div>
-    <div class="scanner-hint" id="scannerHint">枠の中に。真正面だと読めないことが多いので、少し斜めに傾けてみてください</div>
+    <div class="scanner-hint" id="scannerHint">バーコードを縦向き(90度回転)にして枠に合わせてください。正面のままだと読み取れないことが多いです</div>
     <button type="button" id="scannerShareBtn" class="btn small" style="margin-top:10px;display:none">📤 画像を共有</button>
     <button type="button" id="scannerManualShareBtn" class="btn secondary small" style="margin-top:10px;display:none">📷 今の映像を保存（失敗中でもOK）</button>
   </div>
@@ -534,7 +534,7 @@ async function openScanner(onDetected){
       }
     ).then(function(){
       console.log("[NutriStock] カメラ起動成功、読み取り待機中…");
-      setScannerHint("枠の中に。真正面だと読めないことが多いので、少し斜めに傾けてみてください");
+      setScannerHint("バーコードを縦向き(90度回転)にして枠に合わせてください。正面のままだと読み取れないことが多いです");
     }).catch(function(err){
       var detail = err && (err.name || err.message) ? (err.name||"")+" "+(err.message||"") : "";
       setScannerHint("カメラを起動できませんでした。権限が許可されているか確認してください。" + (detail ? "（"+detail+"）" : ""));
