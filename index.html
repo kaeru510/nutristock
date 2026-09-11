@@ -209,6 +209,7 @@
     <div class="scanner-head"><span>バーコードをスキャン</span><button type="button" id="scannerClose" class="btn ghost small">閉じる</button></div>
     <div class="scanner-viewport"><video id="scannerVideo" autoplay playsinline muted></video><canvas id="scannerCanvas"></canvas><div class="scanner-guide"></div></div>
     <div class="scanner-hint" id="scannerHint">枠の中に、バーコードを横向きで合わせてください</div>
+    <button type="button" id="scannerShareBtn" class="btn small" style="margin-top:10px;display:none">📤 画像を共有</button>
   </div>
 </div>
 
@@ -491,6 +492,8 @@ async function openScanner(onDetected){
   var overlay = document.getElementById("scannerOverlay");
   overlay.hidden = false;
   clearDetectionBox();
+  lastSnapshotFile = null;
+  document.getElementById("scannerShareBtn").style.display = "none";
   setScannerHint("カメラを起動しています…");
   try{
     var ZXing = await loadZXing();
@@ -531,43 +534,74 @@ async function openScanner(onDetected){
     setScannerHint("バーコード読み取り機能を読み込めませんでした。通信環境を確認してください。" + (detail2 ? "（"+detail2+"）" : ""));
   }
 }
-function saveDetectionSnapshot(code){
-  if(location.search.indexOf("debug=1") === -1) return; /* only in debug mode, so normal use never triggers a surprise download */
+var lastSnapshotFile = null;
+var DEBUG_MODE = location.search.indexOf("debug=1") !== -1;
+
+function captureSnapshot(code, cb){
   var video = document.getElementById("scannerVideo");
-  if(!video || !video.videoWidth) return;
+  if(!video || !video.videoWidth){ cb(null); return; }
   try{
     var c = document.createElement("canvas");
     c.width = video.videoWidth; c.height = video.videoHeight;
     c.getContext("2d").drawImage(video, 0, 0);
-    var a = document.createElement("a");
-    a.href = c.toDataURL("image/jpeg", 0.85);
-    a.download = "barcode-scan-" + Date.now() + "-" + code + ".jpg";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    console.log("[NutriStock] スキャン時の画像を保存しました:", a.download);
-  }catch(e){ console.warn("[NutriStock] スナップショット保存失敗", e); }
+    c.toBlob(function(blob){
+      if(!blob){ cb(null); return; }
+      var filename = "barcode-scan-" + Date.now() + "-" + code + ".jpg";
+      cb(new File([blob], filename, { type: "image/jpeg" }));
+    }, "image/jpeg", 0.85);
+  }catch(e){ cb(null); }
 }
+async function shareSnapshot(file){
+  if(!file) return;
+  if(navigator.canShare && navigator.canShare({ files: [file] })){
+    try{
+      await navigator.share({ files: [file], title: "NutriStockバーコードスキャン画像" });
+      console.log("[NutriStock] 共有シートで送信/保存しました:", file.name);
+      return;
+    }catch(e){
+      console.log("[NutriStock] 共有がキャンセルされたか失敗しました", e);
+      return;
+    }
+  }
+  /* fallback: plain download link */
+  var url = URL.createObjectURL(file);
+  var a = document.createElement("a");
+  a.href = url; a.download = file.name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+  console.log("[NutriStock] 画像をダウンロードしました:", file.name);
+}
+document.getElementById("scannerShareBtn").addEventListener("click", function(){
+  shareSnapshot(lastSnapshotFile);
+});
+
 function handleBarcodeDetected(code){
   if(!scannerActive || !code) return;
   /* EAN's own check digit already screens out most noise; a successful decode is rare
      enough in practice that requiring a second consecutive match made real reads almost
      never confirm, so accept on the first valid decode. */
   console.log("[NutriStock] バーコード検知:", code);
-  saveDetectionSnapshot(code);
   scannerActive = false;
   setScannerHint("認識しました！ (JAN: " + code + ")");
-  setTimeout(function(){
+  var proceed = function(){
     var overlay = document.getElementById("scannerOverlay");
     if(overlay && overlay.hidden) return; /* viewer already closed it manually during the delay */
     closeScanner();
     if(onBarcodeDetected) onBarcodeDetected(code);
-  }, 550);
+  };
+  if(!DEBUG_MODE){ setTimeout(proceed, 550); return; }
+  captureSnapshot(code, function(file){
+    lastSnapshotFile = file;
+    if(file) document.getElementById("scannerShareBtn").style.display = "";
+    setTimeout(proceed, 4000); /* debug mode: leave more time to tap "share" before auto-continuing */
+  });
 }
 function closeScanner(){
   scannerActive = false;
   try{ if(zxingReader){ zxingReader.reset(); } }catch(e){}
   clearDetectionBox();
+  lastSnapshotFile = null;
+  document.getElementById("scannerShareBtn").style.display = "none";
   var overlay = document.getElementById("scannerOverlay");
   if(overlay) overlay.hidden = true;
 }
