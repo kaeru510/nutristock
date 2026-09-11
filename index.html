@@ -162,6 +162,7 @@
   .scanner-head span{font-weight:700;font-size:14px}
   .scanner-viewport{position:relative;width:100%;aspect-ratio:4/3;background:#111;border-radius:10px;overflow:hidden}
   .scanner-viewport video,.scanner-viewport canvas{width:100% !important;height:100% !important;object-fit:cover;position:absolute;top:0;left:0}
+  .scanner-viewport canvas{pointer-events:none}
   .scanner-hint{font-size:12px;color:var(--ink-3);margin-top:8px;text-align:center}
   .barcode-note{font-size:11.5px;color:var(--accent-soft-ink);background:var(--accent-soft);border-radius:8px;padding:8px 10px;margin-top:2px}
 
@@ -205,7 +206,7 @@
 <div class="scanner-overlay" id="scannerOverlay" hidden>
   <div class="scanner-box">
     <div class="scanner-head"><span>バーコードをスキャン</span><button type="button" id="scannerClose" class="btn ghost small">閉じる</button></div>
-    <div class="scanner-viewport"><video id="scannerVideo" autoplay playsinline muted></video></div>
+    <div class="scanner-viewport"><video id="scannerVideo" autoplay playsinline muted></video><canvas id="scannerCanvas"></canvas></div>
     <div class="scanner-hint" id="scannerHint">商品のバーコード(JANコード)を枠内に映してください</div>
   </div>
 </div>
@@ -448,10 +449,47 @@ function setScannerHint(msg){
   if(h) h.textContent = msg;
 }
 
+function clearDetectionBox(){
+  var canvas = document.getElementById("scannerCanvas");
+  if(!canvas) return;
+  var ctx = canvas.getContext("2d");
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+}
+function drawDetectionBox(resultPoints){
+  var canvas = document.getElementById("scannerCanvas");
+  var video = document.getElementById("scannerVideo");
+  if(!canvas || !video || !video.videoWidth || !resultPoints || !resultPoints.length) return;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = rect.height;
+  var ctx = canvas.getContext("2d");
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  var vw = video.videoWidth, vh = video.videoHeight;
+  var cw = canvas.width, ch = canvas.height;
+  var scale = Math.max(cw/vw, ch/vh);
+  var dw = vw*scale, dh = vh*scale;
+  var offsetX = (dw-cw)/2, offsetY = (dh-ch)/2;
+
+  var pts = resultPoints.map(function(p){
+    return { x: p.getX()*scale - offsetX, y: p.getY()*scale - offsetY };
+  });
+  var xs = pts.map(function(p){ return p.x; });
+  var ys = pts.map(function(p){ return p.y; });
+  var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+  var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+  var padX = 12, padY = 26; /* EAN detection gives a scan line, not a height — pad vertically to approximate the barcode's full box */
+
+  ctx.strokeStyle = "#4ADE80";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(minX-padX, minY-padY, (maxX-minX)+padX*2, (maxY-minY)+padY*2);
+}
+
 async function openScanner(onDetected){
   onBarcodeDetected = onDetected;
   var overlay = document.getElementById("scannerOverlay");
   overlay.hidden = false;
+  clearDetectionBox();
   setScannerHint("カメラを起動しています…");
   try{
     var ZXing = await loadZXing();
@@ -465,7 +503,11 @@ async function openScanner(onDetected){
       "scannerVideo",
       function(result, err){
         if(!scannerActive) return;
-        if(result){ handleBarcodeDetected(result.getText()); return; }
+        if(result){
+          drawDetectionBox(result.getResultPoints ? result.getResultPoints() : null);
+          handleBarcodeDetected(result.getText());
+          return;
+        }
         /* err fires continuously while no barcode is in frame — expected, ignore it */
       }
     ).then(function(){
@@ -487,12 +529,18 @@ function handleBarcodeDetected(code){
      never confirm, so accept on the first valid decode. */
   console.log("[NutriStock] バーコード検知:", code);
   scannerActive = false;
-  closeScanner();
-  if(onBarcodeDetected) onBarcodeDetected(code);
+  setScannerHint("認識しました！ (JAN: " + code + ")");
+  setTimeout(function(){
+    var overlay = document.getElementById("scannerOverlay");
+    if(overlay && overlay.hidden) return; /* viewer already closed it manually during the delay */
+    closeScanner();
+    if(onBarcodeDetected) onBarcodeDetected(code);
+  }, 550);
 }
 function closeScanner(){
   scannerActive = false;
   try{ if(zxingReader){ zxingReader.reset(); } }catch(e){}
+  clearDetectionBox();
   var overlay = document.getElementById("scannerOverlay");
   if(overlay) overlay.hidden = true;
 }
