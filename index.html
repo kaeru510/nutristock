@@ -1,0 +1,1181 @@
+<title>NutriStock</title>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FBFAF7; --surface:#FFFFFF; --surface-2:#F3EFE5; --surface-3:#EBE5D6;
+    --border:#E3DDCD; --ink:#24231D; --ink-2:#5C5949; --ink-3:#938F7C;
+    --accent:#2F6F5E; --accent-ink:#FFFFFF; --accent-soft:#DFEEE8; --accent-soft-ink:#1F4B3F;
+    --good:#3D8B52; --good-soft:#E3F2E6; --good-ink:#1F5C31;
+    --warn:#B9791A; --warn-soft:#FBEEDC; --warn-ink:#7A4E0E;
+    --crit:#C1473A; --crit-soft:#FBE4E1; --crit-ink:#8A3128;
+    --shadow: 0 1px 2px rgba(36,35,29,.06), 0 4px 14px rgba(36,35,29,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#181B17; --surface:#20241F; --surface-2:#262B24; --surface-3:#2E332C;
+      --border:#373C33; --ink:#EDEAE0; --ink-2:#B7B2A0; --ink-3:#83806F;
+      --accent:#63BB9D; --accent-ink:#0E241D; --accent-soft:#233A32; --accent-soft-ink:#8FD6BC;
+      --good:#72BF85; --good-soft:#25352A; --good-ink:#9BDBAB;
+      --warn:#E0A64B; --warn-soft:#3A2F1D; --warn-ink:#F0C784;
+      --crit:#E2776A; --crit-soft:#3A2521; --crit-ink:#F3A79C;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#181B17; --surface:#20241F; --surface-2:#262B24; --surface-3:#2E332C;
+    --border:#373C33; --ink:#EDEAE0; --ink-2:#B7B2A0; --ink-3:#83806F;
+    --accent:#63BB9D; --accent-ink:#0E241D; --accent-soft:#233A32; --accent-soft-ink:#8FD6BC;
+    --good:#72BF85; --good-soft:#25352A; --good-ink:#9BDBAB;
+    --warn:#E0A64B; --warn-soft:#3A2F1D; --warn-ink:#F0C784;
+    --crit:#E2776A; --crit-soft:#3A2521; --crit-ink:#F3A79C;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Zen Kaku Gothic New",system-ui,-apple-system,"Hiragino Kaku Gothic ProN","Hiragino Sans",sans-serif;line-height:1.55}
+  h1,h2,h3{font-family:"Shippori Mincho",serif;font-weight:700;margin:0;text-wrap:balance}
+  button{font-family:inherit}
+  input,select{font-family:inherit;color:inherit}
+  .app{max-width:960px;margin:0 auto;padding:0 16px 96px}
+
+  header.top{padding:28px 4px 18px;display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  header.top .brand{display:flex;align-items:baseline;gap:10px}
+  header.top h1{font-size:26px;letter-spacing:.02em}
+  header.top .tagline{color:var(--ink-3);font-size:12.5px}
+  header.top .today{color:var(--ink-2);font-size:13px;font-variant-numeric:tabular-nums}
+
+  nav.tabs{display:flex;gap:6px;padding:4px;background:var(--surface-2);border-radius:14px;border:1px solid var(--border);margin-bottom:22px;position:sticky;top:10px;z-index:5}
+  nav.tabs button{flex:1;padding:10px 6px;border:none;background:transparent;border-radius:10px;color:var(--ink-2);font-size:13.5px;font-weight:500;cursor:pointer;transition:background .15s,color .15s}
+  nav.tabs button.active{background:var(--surface);color:var(--accent-soft-ink);box-shadow:var(--shadow);font-weight:700}
+  nav.tabs button:hover:not(.active){color:var(--ink)}
+
+  section.panel{display:none}
+  section.panel.active{display:block;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px 18px;box-shadow:var(--shadow)}
+  .card + .card{margin-top:16px}
+  .card h2{font-size:16px;margin-bottom:4px}
+  .card .sub{color:var(--ink-3);font-size:12.5px;margin-bottom:14px}
+  .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
+
+  .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+  .stat-tile{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow)}
+  .stat-tile .label{color:var(--ink-3);font-size:12px;margin-bottom:6px}
+  .stat-tile .value{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;font-family:"Shippori Mincho",serif}
+  .stat-tile .value small{font-size:14px;color:var(--ink-3);font-weight:400;font-family:inherit}
+
+  .meters{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .meter{border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--surface-2)}
+  .meter .mh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;gap:8px}
+  .meter .mh .name{font-weight:700;font-size:13.5px}
+  .meter .mh .nums{font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .track{height:9px;border-radius:5px;background:var(--surface-3);overflow:hidden}
+  .fill{height:100%;border-radius:5px;background:var(--accent)}
+  .badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;margin-top:8px}
+  .badge.good{background:var(--good-soft);color:var(--good-ink)}
+  .badge.warn{background:var(--warn-soft);color:var(--warn-ink)}
+  .badge.crit{background:var(--crit-soft);color:var(--crit-ink)}
+  .badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+
+  .empty{padding:30px 12px;text-align:center;color:var(--ink-3)}
+  .empty .glyph{font-size:26px;margin-bottom:8px;opacity:.7}
+  .empty p{margin:0 0 12px;font-size:13.5px}
+
+  .btn{appearance:none;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:13.5px;padding:9px 16px;border-radius:10px;cursor:pointer}
+  .btn:hover{filter:brightness(1.06)}
+  .btn.secondary{background:transparent;color:var(--accent);border:1px solid var(--border)}
+  .btn.ghost{background:transparent;color:var(--ink-2);border:1px solid transparent;padding:6px 10px;font-weight:500}
+  .btn.ghost:hover{color:var(--crit)}
+  .btn.small{padding:6px 12px;font-size:12.5px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+
+  .list{display:flex;flex-direction:column;gap:8px}
+  .row-item{display:flex;align-items:center;gap:12px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:var(--surface)}
+  .row-item .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+  .row-item .main{flex:1;min-width:0}
+  .row-item .name{font-weight:700;font-size:14px}
+  .row-item .meta{color:var(--ink-3);font-size:12px;margin-top:2px}
+  .row-item .tag{font-size:11px;color:var(--ink-2);background:var(--surface-2);padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .row-item .days{font-size:12px;font-weight:700;white-space:nowrap}
+
+  .suggest-card{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--accent-soft)}
+  .suggest-card .ic{font-size:20px;line-height:1}
+  .suggest-card .t{font-weight:700;font-size:13.5px;color:var(--accent-soft-ink)}
+  .suggest-card .d{font-size:12.5px;color:var(--ink-2);margin-top:2px}
+  .suggest-list{display:flex;flex-direction:column;gap:10px}
+
+  form.inline{display:grid;grid-template-columns:1fr;gap:10px}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field label{font-size:11.5px;color:var(--ink-3);font-weight:700;letter-spacing:.02em}
+  .field input,.field select{padding:9px 10px;border-radius:9px;border:1px solid var(--border);background:var(--surface);font-size:13.5px}
+  .field input:focus,.field select:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .field-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+  .checkline{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2)}
+  .form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:2px}
+  .hint{font-size:11.5px;color:var(--ink-3)}
+
+  .pill-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .pill-tabs button{border:1px solid var(--border);background:var(--surface);color:var(--ink-2);font-size:12.5px;font-weight:700;padding:7px 13px;border-radius:999px;cursor:pointer}
+  .pill-tabs button.active{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
+  .photo-picker{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .photo-preview{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--border)}
+  .photo-row{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:var(--surface)}
+  .photo-row .pi-check{flex-shrink:0;width:16px;height:16px;accent-color:var(--accent)}
+  .photo-row .main{flex:1;min-width:0}
+  .photo-row .name{font-weight:700;font-size:14px}
+  .photo-row .meta{color:var(--ink-3);font-size:12px;margin-top:2px}
+  .photo-row .qty{width:88px;flex-shrink:0}
+  .photo-row .qty label{display:block;font-size:10px;color:var(--ink-3);margin-bottom:2px}
+  .photo-row .qty input{width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-variant-numeric:tabular-nums}
+
+  .totals-bar{display:flex;flex-wrap:wrap;gap:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;font-size:12.5px;color:var(--ink-2);margin-bottom:14px}
+  .totals-bar b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+  .disclaimer{font-size:11.5px;color:var(--ink-3);border-top:1px solid var(--border);margin-top:16px;padding-top:12px}
+
+  .toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,12px);background:var(--ink);color:var(--bg);font-size:13px;font-weight:700;padding:10px 18px;border-radius:999px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;z-index:60;display:flex;align-items:center;gap:6px}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast::before{content:"✓";display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:11px;flex-shrink:0}
+
+  .quick-form{display:flex;gap:6px;margin-top:8px}
+  .quick-form input{width:0;flex:1;padding:7px 9px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-variant-numeric:tabular-nums}
+  .quick-form input:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .quick-form button{flex-shrink:0}
+  .stat-tile .note{font-size:11px;color:var(--ink-3);margin-top:6px}
+
+  .step-presets{display:flex;gap:6px;margin-top:10px}
+  .step-presets button{flex:1;border:1px solid var(--border);background:var(--surface-2);color:var(--ink-2);border-radius:8px;padding:6px 4px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.5;text-align:center}
+  .step-presets button span{display:block;font-weight:400;color:var(--ink-3);font-size:10px;font-variant-numeric:tabular-nums}
+  .step-presets button:hover{border-color:var(--accent);color:var(--ink)}
+
+  .scanner-overlay{position:fixed;inset:0;background:rgba(20,18,12,.62);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}
+  .scanner-overlay[hidden]{display:none}
+  .scanner-box{background:var(--surface);border-radius:16px;padding:14px;max-width:440px;width:100%;box-shadow:var(--shadow)}
+  .scanner-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .scanner-head span{font-weight:700;font-size:14px}
+  .scanner-viewport{position:relative;width:100%;aspect-ratio:4/3;background:#111;border-radius:10px;overflow:hidden}
+  .scanner-viewport video,.scanner-viewport canvas{width:100% !important;height:100% !important;object-fit:cover;position:absolute;top:0;left:0}
+  .scanner-hint{font-size:12px;color:var(--ink-3);margin-top:8px;text-align:center}
+  .barcode-note{font-size:11.5px;color:var(--accent-soft-ink);background:var(--accent-soft);border-radius:8px;padding:8px 10px;margin-top:2px}
+
+  @media (max-width:600px){
+    header.top{padding-top:20px}
+    .app{padding-bottom:100px}
+  }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <h1>NutriStock</h1>
+      <span class="tagline">栄養バランス × 食材ロスゼロ</span>
+    </div>
+    <div class="today" id="todayLabel"></div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="home" class="active">ホーム</button>
+    <button data-tab="pantry">パントリー</button>
+    <button data-tab="meals">食事記録</button>
+    <button data-tab="settings">設定</button>
+  </nav>
+
+  <!-- HOME -->
+  <section class="panel active" data-panel="home" id="panel-home"></section>
+
+  <!-- PANTRY -->
+  <section class="panel" data-panel="pantry" id="panel-pantry"></section>
+
+  <!-- MEALS -->
+  <section class="panel" data-panel="meals" id="panel-meals"></section>
+
+  <!-- SETTINGS -->
+  <section class="panel" data-panel="settings" id="panel-settings"></section>
+</div>
+
+<div class="scanner-overlay" id="scannerOverlay" hidden>
+  <div class="scanner-box">
+    <div class="scanner-head"><span>バーコードをスキャン</span><button type="button" id="scannerClose" class="btn ghost small">閉じる</button></div>
+    <div class="scanner-viewport"><video id="scannerVideo" autoplay playsinline muted></video></div>
+    <div class="scanner-hint" id="scannerHint">商品のバーコード(JANコード)を枠内に映してください</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- food database (approx. per 100g, based on 日本食品標準成分表) ---------- */
+var FOOD_DB = [
+  {key:"chicken_breast",name:"鶏むね肉(皮なし)",cat:"meat",kcal:108,p:22.3,f:1.5,c:0.1,fiber:0,salt:0.1,veg:false,unit:"g"},
+  {key:"chicken_thigh",name:"鶏もも肉(皮なし)",cat:"meat",kcal:113,p:19.0,f:5.0,c:0,fiber:0,salt:0.2,veg:false,unit:"g"},
+  {key:"chicken_mince",name:"鶏ひき肉",cat:"meat",kcal:171,p:17.5,f:12.0,c:0,fiber:0,salt:0.1,veg:false,unit:"g"},
+  {key:"pork_koma",name:"豚こま切れ肉",cat:"meat",kcal:221,p:17.7,f:15.1,c:0.1,fiber:0,salt:0.1,veg:false,unit:"g"},
+  {key:"pork_loin",name:"豚ロース肉",cat:"meat",kcal:263,p:19.3,f:19.2,c:0.2,fiber:0,salt:0.1,veg:false,unit:"g"},
+  {key:"beef_koma",name:"牛こま切れ肉",cat:"meat",kcal:249,p:17.4,f:18.6,c:0.5,fiber:0,salt:0.1,veg:false,unit:"g"},
+  {key:"egg",name:"卵",cat:"egg_dairy",kcal:151,p:12.2,f:10.2,c:0.3,fiber:0,salt:0.4,veg:false,unit:"個"},
+  {key:"milk",name:"牛乳",cat:"egg_dairy",kcal:61,p:3.3,f:3.8,c:4.8,fiber:0,salt:0.1,veg:false,unit:"ml"},
+  {key:"yogurt",name:"ヨーグルト(無糖)",cat:"egg_dairy",kcal:56,p:3.6,f:3.0,c:4.9,fiber:0,salt:0.1,veg:false,unit:"個"},
+  {key:"cheese",name:"チーズ",cat:"egg_dairy",kcal:313,p:22.7,f:26.0,c:1.3,fiber:0,salt:2.8,veg:false,unit:"パック"},
+  {key:"tofu_momen",name:"木綿豆腐",cat:"soy",kcal:72,p:6.6,f:4.2,c:1.6,fiber:0.4,salt:0,veg:false,unit:"パック"},
+  {key:"tofu_kinu",name:"絹ごし豆腐",cat:"soy",kcal:56,p:4.9,f:3.0,c:2.0,fiber:0.3,salt:0,veg:false,unit:"パック"},
+  {key:"natto",name:"納豆",cat:"soy",kcal:190,p:16.5,f:10.0,c:12.1,fiber:6.7,salt:0,veg:false,unit:"パック"},
+  {key:"atsuage",name:"厚揚げ",cat:"soy",kcal:143,p:10.7,f:11.3,c:0.9,fiber:0.7,salt:0,veg:false,unit:"枚"},
+  {key:"abura_age",name:"油揚げ",cat:"soy",kcal:377,p:23.4,f:34.4,c:0.4,fiber:0.7,salt:0,veg:false,unit:"枚"},
+  {key:"soymilk",name:"豆乳",cat:"soy",kcal:44,p:3.6,f:2.0,c:3.1,fiber:0.2,salt:0,veg:false,unit:"ml"},
+  {key:"spinach",name:"ほうれん草(茹)",cat:"veg",kcal:25,p:2.6,f:0.5,c:4.0,fiber:2.8,salt:0,veg:true,unit:"パック"},
+  {key:"carrot",name:"にんじん",cat:"veg",kcal:35,p:0.6,f:0.1,c:8.5,fiber:2.4,salt:0.03,veg:true,unit:"本"},
+  {key:"broccoli",name:"ブロッコリー(茹)",cat:"veg",kcal:30,p:3.9,f:0.2,c:5.2,fiber:4.3,salt:0,veg:true,unit:"個"},
+  {key:"cabbage",name:"キャベツ",cat:"veg",kcal:21,p:1.3,f:0.2,c:4.9,fiber:1.8,salt:0,veg:true,unit:"個"},
+  {key:"onion",name:"玉ねぎ",cat:"veg",kcal:33,p:1.0,f:0.1,c:7.6,fiber:1.5,salt:0,veg:true,unit:"個"},
+  {key:"tomato",name:"トマト",cat:"veg",kcal:20,p:0.7,f:0.1,c:4.6,fiber:1.0,salt:0,veg:true,unit:"個"},
+  {key:"cucumber",name:"きゅうり",cat:"veg",kcal:13,p:0.7,f:0.1,c:1.9,fiber:0.5,salt:0,veg:true,unit:"本"},
+  {key:"moyashi",name:"もやし",cat:"veg",kcal:14,p:1.7,f:0.1,c:1.3,fiber:1.3,salt:0,veg:true,unit:"パック"},
+  {key:"eggplant",name:"なす",cat:"veg",kcal:18,p:0.7,f:0.1,c:3.0,fiber:2.2,salt:0,veg:true,unit:"個"},
+  {key:"green_pepper",name:"ピーマン",cat:"veg",kcal:20,p:0.7,f:0.1,c:3.0,fiber:2.3,salt:0,veg:true,unit:"個"},
+  {key:"daikon",name:"大根",cat:"veg",kcal:15,p:0.4,f:0.1,c:2.7,fiber:1.3,salt:0,veg:true,unit:"本"},
+  {key:"negi",name:"長ねぎ",cat:"veg",kcal:28,p:1.1,f:0.1,c:5.8,fiber:2.2,salt:0,veg:true,unit:"本"},
+  {key:"shimeji",name:"しめじ",cat:"veg",kcal:26,p:2.7,f:0.5,c:4.8,fiber:3.0,salt:0,veg:true,unit:"パック"},
+  {key:"potato",name:"じゃがいも",cat:"veg",kcal:59,p:1.6,f:0.1,c:13.9,fiber:1.2,salt:0,veg:false,unit:"個"},
+  {key:"rice_white",name:"ごはん(白米)",cat:"grain",kcal:156,p:2.5,f:0.3,c:37.1,fiber:0.3,salt:0,veg:false,unit:"g"},
+  {key:"rice_brown",name:"ごはん(玄米)",cat:"grain",kcal:152,p:2.8,f:1.0,c:35.6,fiber:1.4,salt:0,veg:false,unit:"g"},
+  {key:"bread",name:"食パン",cat:"grain",kcal:248,p:8.9,f:4.1,c:46.4,fiber:2.2,salt:1.2,veg:false,unit:"枚"},
+  {key:"udon",name:"うどん(茹)",cat:"grain",kcal:95,p:2.6,f:0.4,c:20.8,fiber:0.8,salt:0.2,veg:false,unit:"パック"},
+  {key:"pasta_dry",name:"パスタ(乾)",cat:"grain",kcal:347,p:12.9,f:1.8,c:69.5,fiber:3.0,salt:0,veg:false,unit:"g"},
+  {key:"salmon",name:"鮭(生)",cat:"fish",kcal:133,p:22.3,f:4.1,c:0.1,fiber:0,salt:0.2,veg:false,unit:"g"},
+  {key:"saba",name:"さば(生)",cat:"fish",kcal:202,p:20.6,f:12.1,c:0.3,fiber:0,salt:0.3,veg:false,unit:"g"},
+  {key:"maguro",name:"まぐろ赤身",cat:"fish",kcal:115,p:26.4,f:1.4,c:0.1,fiber:0,salt:0.1,veg:false,unit:"g"},
+  {key:"shrimp",name:"えび",cat:"fish",kcal:82,p:18.4,f:0.3,c:0.3,fiber:0,salt:0.4,veg:false,unit:"g"},
+  {key:"banana",name:"バナナ",cat:"fruit",kcal:93,p:1.1,f:0.2,c:22.5,fiber:1.1,salt:0,veg:false,unit:"本"},
+  {key:"apple",name:"りんご",cat:"fruit",kcal:56,p:0.1,f:0.1,c:15.5,fiber:1.4,salt:0,veg:false,unit:"個"},
+  {key:"mikan",name:"みかん",cat:"fruit",kcal:46,p:0.7,f:0.1,c:11.0,fiber:1.0,salt:0,veg:false,unit:"個"},
+  {key:"miso",name:"味噌",cat:"season",kcal:192,p:12.5,f:6.0,c:21.9,fiber:0,salt:12.4,veg:false,unit:"g"},
+  {key:"soy_sauce",name:"醤油",cat:"season",kcal:71,p:7.7,f:0,c:7.9,fiber:0,salt:14.5,veg:false,unit:"ml"},
+  {key:"salad_oil",name:"サラダ油",cat:"season",kcal:921,p:0,f:100,c:0,fiber:0,salt:0,veg:false,unit:"ml"}
+];
+var FOOD_BY_KEY = {};
+FOOD_DB.forEach(function(f){ FOOD_BY_KEY[f.key] = f; });
+var CAT_LABEL = {meat:"肉",fish:"魚介",egg_dairy:"卵・乳製品",soy:"大豆製品",veg:"野菜・きのこ",grain:"穀物",fruit:"果物",season:"調味料・油",other:"その他"};
+var CAT_ICON = {meat:"🍗",fish:"🐟",egg_dairy:"🥛",soy:"🫘",veg:"🥬",grain:"🍚",fruit:"🍎",season:"🧂",other:"🍽️"};
+var MEAL_LABEL = {breakfast:"朝食",lunch:"昼食",dinner:"夕食",snack:"間食"};
+var NUTRIENT_LABEL = {kcal:"エネルギー",protein:"たんぱく質",fat:"脂質",carb:"炭水化物",fiber:"食物繊維",salt:"食塩相当量",veg:"野菜摂取量"};
+var NUTRIENT_UNIT = {kcal:"kcal",protein:"g",fat:"g",carb:"g",fiber:"g",salt:"g",veg:"g"};
+var ACTIVITY_OPTIONS = [
+  {v:1.2,label:"低い（デスクワーク中心・運動少なめ）"},
+  {v:1.375,label:"ふつう（立ち仕事や軽い運動あり）"},
+  {v:1.55,label:"高い（活発な運動習慣がある）"},
+  {v:1.725,label:"非常に高い（激しい運動・肉体労働）"}
+];
+var PROTEIN_GOAL_OPTIONS = [
+  {v:1.0,label:"健康維持（運動はあまりしない）"},
+  {v:1.2,label:"健康維持・軽い運動習慣（標準）"},
+  {v:1.6,label:"筋トレ・運動習慣がある"},
+  {v:2.0,label:"本格的に鍛えている"}
+];
+function proteinEquivalentText(grams){
+  if(!grams || grams<=0) return "";
+  var chicken = Math.round(grams / FOOD_BY_KEY.chicken_breast.p * 100);
+  var eggGrams = 50; var eggProtein = FOOD_BY_KEY.egg.p * eggGrams/100;
+  var eggs = Math.round(grams / eggProtein);
+  return "鶏むね肉 約"+chicken+"g、または卵 約"+eggs+"個ぶん";
+}
+
+/* ---------- state ---------- */
+function defaultState(){
+  return { profile:null, targets:null, pantry:[], meals:[], steps:{}, barcodes:{} };
+}
+/* db snapshots deliver frozen data — deep-clone before merging into mutable local state */
+function deepClone(o){ return JSON.parse(JSON.stringify(o)); }
+var state = defaultState();
+var dbDoc = null;
+var dbReady = false;
+
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+function todayStr(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function daysUntil(dateStr){
+  var today = new Date(todayStr()+"T00:00:00");
+  var target = new Date(dateStr+"T00:00:00");
+  return Math.round((target-today)/86400000);
+}
+function round1(n){ return Math.round(n*10)/10; }
+
+/* ---------- persistence ---------- */
+var hasUnsyncedLocalChange = false;
+var toastTimer = null;
+function showToast(msg){
+  var t = document.getElementById("toast");
+  if(!t) return;
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 1800);
+}
+function persist(fields){
+  try{ localStorage.setItem("nutristock_state", JSON.stringify(state)); }catch(e){}
+  if(fields) showToast("保存しました");
+  if(!dbDoc){ hasUnsyncedLocalChange = true; return; }
+  if(!fields || !dbReady){
+    dbDoc.set(state).catch(function(){});
+    hasUnsyncedLocalChange = false;
+    return;
+  }
+  var patch = {};
+  fields.forEach(function(k){ patch[k] = state[k]; });
+  dbDoc.update(patch).catch(function(){ dbDoc.set(state).catch(function(){}); });
+}
+function loadLocal(){
+  try{
+    var raw = localStorage.getItem("nutristock_state");
+    if(raw){ var parsed = JSON.parse(raw); if(parsed && typeof parsed==="object"){ state = Object.assign(defaultState(), parsed); } }
+  }catch(e){}
+}
+async function initDb(){
+  loadLocal();
+  renderAll();
+  try{
+    var db = await claude.use("db");
+    if(!db) return;
+    dbDoc = db.doc("app/state");
+    dbDoc.onSnapshot(function(snap){
+      var firstDelivery = !dbReady;
+      if(snap.exists){
+        var data = snap.data();
+        if(data && typeof data==="object"){
+          if(firstDelivery && hasUnsyncedLocalChange){
+            /* the viewer already changed something locally before the db connection finished —
+               keep their edit and push it, rather than letting stale server data silently discard it */
+            dbDoc.set(state).catch(function(){});
+            hasUnsyncedLocalChange = false;
+          } else {
+            var incoming = JSON.stringify(data);
+            if(incoming !== JSON.stringify(state)){
+              state = Object.assign(defaultState(), deepClone(data));
+              renderAll();
+            }
+          }
+        }
+      } else if(!dbReady){
+        dbDoc.set(state).catch(function(){});
+      }
+      dbReady = true;
+    }, function(){ /* degrade silently, keep local persistence */ });
+  }catch(e){}
+}
+
+/* ---------- AI photo analysis (sample capability) ---------- */
+var sampleFn = null;
+var sampleLimits = null;
+var sampleUnavailable = false;
+var sampleChecked = false;
+var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
+
+async function initSample(){
+  try{
+    var s = await claude.use("sample");
+    if(!s){ sampleUnavailable = true; sampleChecked = true; renderMeals(); return; }
+    sampleFn = s;
+    try{ sampleLimits = await s.limits(); }catch(e){ sampleLimits = null; }
+    if(!sampleLimits || !sampleLimits.images) sampleUnavailable = true;
+    sampleChecked = true;
+    renderMeals();
+  }catch(e){ sampleUnavailable = true; sampleChecked = true; renderMeals(); }
+}
+
+var PHOTO_ERROR_MESSAGES = {
+  not_granted:"AI解析の利用が許可されていません。",
+  sampling_disabled:"この環境ではAI解析を利用できません。",
+  not_declared:"この環境ではAI解析を利用できません。",
+  capability_disabled:"この環境ではAI解析を利用できません。",
+  capability_removed:"この環境ではAI解析を利用できません。",
+  images_unavailable:"この環境では画像を送信できません。",
+  image_rejected:"画像を読み取れませんでした。別の写真でお試しください。",
+  rate_limited:"リクエストが混み合っています。しばらくしてからもう一度お試しください。",
+  invalid_json:"AIの応答を解析できませんでした。もう一度お試しください。",
+  refused:"この画像は解析できませんでした。",
+  empty_completion:"解析結果を取得できませんでした。もう一度お試しください。",
+  prompt_too_large:"画像が大きすぎます。別の写真でお試しください。"
+};
+var PHOTO_PERMANENT_HIDE = {not_granted:1,sampling_disabled:1,not_declared:1,capability_disabled:1,capability_removed:1,images_unavailable:1};
+
+function per100FromPhotoItem(it){
+  var g = it.estimatedGrams>0 ? it.estimatedGrams : 0;
+  function r(v){ return g>0 ? (Number(v)||0)/g*100 : 0; }
+  return {kcal:r(it.kcal),p:r(it.protein),f:r(it.fat),c:r(it.carb),fiber:r(it.fiber),salt:r(it.salt)};
+}
+function nutrientsForPhotoItem(item, qty){
+  var factor = qty/100;
+  return {
+    kcal: item.per100.kcal*factor, protein: item.per100.p*factor, fat: item.per100.f*factor,
+    carb: item.per100.c*factor, fiber: item.per100.fiber*factor, salt: item.per100.salt*factor,
+    veg: qty*item.vegRatio
+  };
+}
+function escapeAttr(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+
+/* ---------- barcode scanner (ZXing, loaded on demand) ---------- */
+var zxingLoading = null;
+var scannerActive = false;
+var pendingBarcode = null;
+var onBarcodeDetected = null; /* set by whoever opens the scanner */
+var zxingReader = null;
+
+function loadZXing(){
+  if(window.ZXing) return Promise.resolve(window.ZXing);
+  if(zxingLoading) return zxingLoading;
+  zxingLoading = new Promise(function(resolve, reject){
+    var s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js";
+    s.onload = function(){ resolve(window.ZXing); };
+    s.onerror = function(){ reject(new Error("load_failed")); };
+    document.head.appendChild(s);
+  });
+  return zxingLoading;
+}
+
+function setScannerHint(msg){
+  var h = document.getElementById("scannerHint");
+  if(h) h.textContent = msg;
+}
+
+async function openScanner(onDetected){
+  onBarcodeDetected = onDetected;
+  var overlay = document.getElementById("scannerOverlay");
+  overlay.hidden = false;
+  setScannerHint("カメラを起動しています…");
+  try{
+    var ZXing = await loadZXing();
+    var hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E, ZXing.BarcodeFormat.CODE_128]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    zxingReader = new ZXing.BrowserMultiFormatReader(hints);
+    scannerActive = true;
+    zxingReader.decodeFromConstraints(
+      { audio:false, video: { facingMode: { ideal:"environment" }, width:{ ideal:1920 }, height:{ ideal:1080 } } },
+      "scannerVideo",
+      function(result, err){
+        if(!scannerActive) return;
+        if(result){ handleBarcodeDetected(result.getText()); return; }
+        /* err fires continuously while no barcode is in frame — expected, ignore it */
+      }
+    ).then(function(){
+      setScannerHint("商品のバーコード(JANコード)を枠内に映してください");
+    }).catch(function(err){
+      var detail = err && (err.name || err.message) ? (err.name||"")+" "+(err.message||"") : "";
+      setScannerHint("カメラを起動できませんでした。権限が許可されているか確認してください。" + (detail ? "（"+detail+"）" : ""));
+    });
+  }catch(e){
+    var detail2 = e && (e.name || e.message) ? (e.name||"")+" "+(e.message||"") : "";
+    setScannerHint("バーコード読み取り機能を読み込めませんでした。通信環境を確認してください。" + (detail2 ? "（"+detail2+"）" : ""));
+  }
+}
+function handleBarcodeDetected(code){
+  if(!scannerActive || !code) return;
+  scannerActive = false;
+  closeScanner();
+  if(onBarcodeDetected) onBarcodeDetected(code);
+}
+function closeScanner(){
+  scannerActive = false;
+  try{ if(zxingReader){ zxingReader.reset(); } }catch(e){}
+  var overlay = document.getElementById("scannerOverlay");
+  if(overlay) overlay.hidden = true;
+}
+document.getElementById("scannerClose").addEventListener("click", closeScanner);
+document.getElementById("scannerOverlay").addEventListener("click", function(e){
+  if(e.target.id === "scannerOverlay") closeScanner();
+});
+document.addEventListener("keydown", function(e){
+  if(e.key === "Escape" && !document.getElementById("scannerOverlay").hidden) closeScanner();
+});
+
+async function runPhotoAnalysis(file){
+  photoUi.status = "loading"; photoUi.items = []; photoUi.error = "";
+  renderMeals();
+  var prompt = "あなたは栄養士です。添付した料理写真を見て、写っている食品を最大6品まで識別し、それぞれの一般的な1人前の分量を推定したうえで栄養価を概算してください。\n"
+    + "次のJSON配列の形式だけで回答してください。前後に説明文は書かないでください。\n"
+    + '[{"name":"食品名(日本語、具体的に)","estimatedGrams":推定重量の数値(g),"kcal":その重量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0)}]\n'
+    + "数値はすべて概算で構いません。写真から判断できる範囲で答えてください。";
+  try{
+    var result = await sampleFn.json(prompt, { images: file, modelTier: "default" });
+    var arr = Array.isArray(result) ? result : (result && typeof result==="object" ? [result] : []);
+    photoUi.items = arr.slice(0,6).map(function(it){
+      var estimatedGrams = Number(it.estimatedGrams)||0;
+      var vegetableGrams = Number(it.vegetableGrams)||0;
+      var item = {
+        name: String(it.name||"名称不明の食品").slice(0,60),
+        estimatedGrams: estimatedGrams,
+        kcal: Number(it.kcal)||0, protein: Number(it.protein)||0, fat: Number(it.fat)||0,
+        carb: Number(it.carb)||0, fiber: Number(it.fiber)||0, salt: Number(it.salt)||0,
+        vegRatio: estimatedGrams>0 ? Math.max(0, Math.min(1, vegetableGrams/estimatedGrams)) : 0
+      };
+      item.per100 = per100FromPhotoItem(item);
+      return item;
+    });
+    photoUi.status = photoUi.items.length ? "done" : "error";
+    if(!photoUi.items.length) photoUi.error = "食品を認識できませんでした。もう一度お試しください。";
+  }catch(e){
+    if(e && e.code==="cancelled"){ photoUi.status="idle"; renderMeals(); return; }
+    var code = e && e.code;
+    if(PHOTO_PERMANENT_HIDE[code]) sampleUnavailable = true;
+    photoUi.status = "error";
+    photoUi.error = PHOTO_ERROR_MESSAGES[code] || "一時的なエラーが発生しました。もう一度お試しください。";
+  }
+  renderMeals();
+}
+
+/* ---------- targets ---------- */
+function calcTargets(profile){
+  var bmr = profile.sex==="male"
+    ? 10*profile.weight + 6.25*profile.height - 5*profile.age + 5
+    : 10*profile.weight + 6.25*profile.height - 5*profile.age - 161;
+  var kcal = Math.round(bmr*profile.activity);
+  var protein = Math.round(profile.weight*profile.proteinPerKg);
+  var fat = Math.round(kcal*0.25/9);
+  var carb = Math.max(0, Math.round((kcal - protein*4 - fat*9)/4));
+  var fiber = profile.sex==="male" ? 21 : 18;
+  var salt = profile.sex==="male" ? 7.5 : 6.5;
+  return {kcal:kcal, protein:protein, fat:fat, carb:carb, fiber:fiber, salt:salt, veg:350};
+}
+
+/* ---------- nutrient totals ---------- */
+function nutrientsForFood(food, qty){
+  var factor = qty/100;
+  return {
+    kcal: food.kcal*factor, protein: food.p*factor, fat: food.f*factor,
+    carb: food.c*factor, fiber: food.fiber*factor, salt: food.salt*factor,
+    veg: food.veg ? qty : 0
+  };
+}
+function sumNutrients(list){
+  var t = {kcal:0,protein:0,fat:0,carb:0,fiber:0,salt:0,veg:0};
+  list.forEach(function(m){
+    Object.keys(t).forEach(function(k){ t[k]+= (m.nutrients[k]||0); });
+  });
+  return t;
+}
+function todaysMeals(){
+  var t = todayStr();
+  return state.meals.filter(function(m){ return m.date===t; });
+}
+function todaysSteps(){
+  return (state.steps && state.steps[todayStr()]) || 0;
+}
+/* rough estimate: ~30-40kcal per 1000 steps for an average adult, scaled by body weight when known */
+function extraKcalFromSteps(steps){
+  if(!steps) return 0;
+  var perStep = state.profile ? state.profile.weight*0.0005 : 0.035;
+  return Math.round(steps*perStep);
+}
+
+/* upper-limit nutrients should not be exceeded; the rest are minimum targets */
+var UPPER_LIMIT = {fat:true, salt:true};
+function nutrientStatus(key, consumed, target){
+  if(!target) return "good";
+  var ratio = consumed/target;
+  if(UPPER_LIMIT[key]){
+    if(ratio>1.0) return "crit";
+    if(ratio>0.85) return "warn";
+    return "good";
+  }
+  if(key==="kcal"){
+    if(ratio<0.7 || ratio>1.2) return "warn";
+    return "good";
+  }
+  if(ratio<0.8) return "warn";
+  return "good";
+}
+var STATUS_LABEL = {
+  fat:{good:"適正",warn:"注意",crit:"過剰"},
+  salt:{good:"適正",warn:"注意",crit:"過剰"},
+  kcal:{good:"適正",warn:"ズレあり",crit:"適正"},
+  protein:{good:"適正",warn:"不足",crit:"不足"},
+  carb:{good:"適正",warn:"不足",crit:"不足"},
+  fiber:{good:"適正",warn:"不足",crit:"不足"},
+  veg:{good:"適正",warn:"不足",crit:"不足"}
+};
+
+/* ---------- tabs ---------- */
+document.getElementById("tabs").addEventListener("click", function(e){
+  var btn = e.target.closest("button[data-tab]");
+  if(!btn) return;
+  document.querySelectorAll("nav.tabs button").forEach(function(b){ b.classList.toggle("active", b===btn); });
+  document.querySelectorAll("section.panel").forEach(function(p){ p.classList.toggle("active", p.dataset.panel===btn.dataset.tab); });
+});
+
+/* ---------- render: HOME ---------- */
+function foodRole(f){
+  if(!f) return null;
+  if(f.cat==="meat" || f.cat==="fish" || f.cat==="egg_dairy" || f.cat==="soy") return "protein";
+  if(f.cat==="veg" && f.veg) return "veg";
+  if(f.cat==="grain") return "carb";
+  return null;
+}
+
+function suggestionList(){
+  var totals = sumNutrients(todaysMeals());
+  var targets = state.targets;
+  var pantry = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
+  var soon = pantry.filter(function(p){ return daysUntil(p.expiry)<=4; });
+  if(soon.length===0) soon = pantry.slice(0,4);
+
+  var cards = [];
+
+  /* caution: nutrients already over their upper limit today */
+  if(targets){
+    var overNow = ["fat","salt"].filter(function(k){ return nutrientStatus(k, totals[k], targets[k])==="crit"; });
+    if(overNow.length){
+      cards.push({
+        ic: "⚠️",
+        t: overNow.map(function(k){ return NUTRIENT_LABEL[k]; }).join("・") + "がすでに目標を超過",
+        d: "味付けや揚げ物は控えめに、次の食事は薄味・低脂質を意識しましょう"
+      });
+    }
+  }
+
+  var deficient = targets ? ["protein","fiber","veg"].filter(function(k){
+      return nutrientStatus(k, totals[k], targets[k])!=="good";
+    }).sort(function(a,b){ return (totals[a]/targets[a]) - (totals[b]/targets[b]); }) : [];
+
+  var tagged = soon.map(function(p){
+    var f = FOOD_BY_KEY[p.foodKey];
+    var helps = [];
+    if(f){
+      if(f.p>=14) helps.push("protein");
+      if(f.fiber>=2.5) helps.push("fiber");
+      if(f.veg) helps.push("veg");
+    }
+    return { p:p, f:f, role:foodRole(f), helps:helps, days:daysUntil(p.expiry) };
+  });
+
+  var usedIds = {};
+  function pickBest(pool, helpKey){
+    var candidates = pool.filter(function(t){ return !usedIds[t.p.id]; });
+    var withHelp = helpKey ? candidates.filter(function(t){ return t.helps.indexOf(helpKey)>=0; }) : candidates;
+    var arr = withHelp.length ? withHelp : candidates;
+    if(!arr.length) return null;
+    arr.sort(function(a,b){ return a.days-b.days; });
+    return arr[0];
+  }
+  var proteinPool = tagged.filter(function(t){ return t.role==="protein"; });
+  var vegPool = tagged.filter(function(t){ return t.role==="veg"; });
+  var carbPool = tagged.filter(function(t){ return t.role==="carb"; });
+
+  /* combine up to 2 complementary "meal" suggestions from soon-to-expire items */
+  for(var i=0;i<2;i++){
+    var wantNutrient = deficient[i] || deficient[0] || null;
+    var proteinNeed = wantNutrient==="protein" || !wantNutrient;
+    var vegNeed = wantNutrient==="fiber" || wantNutrient==="veg" || !wantNutrient;
+
+    var chosen = [];
+    var prot = pickBest(proteinPool, proteinNeed ? "protein" : null);
+    if(prot){ chosen.push(prot); usedIds[prot.p.id]=true; }
+    var veg = pickBest(vegPool, vegNeed ? (wantNutrient==="fiber"?"fiber":"veg") : null);
+    if(veg){ chosen.push(veg); usedIds[veg.p.id]=true; }
+    if(chosen.length<2){
+      var carb = pickBest(carbPool, null);
+      if(carb){ chosen.push(carb); usedIds[carb.p.id]=true; }
+    }
+    if(!chosen.length) break;
+
+    var cats = chosen.map(function(c){ return c.f ? c.f.cat : null; });
+    var method = "調理";
+    if(cats.indexOf("fish")>=0) method = "焼く・煮る";
+    else if(cats.indexOf("meat")>=0 && cats.indexOf("veg")>=0) method = "炒め物";
+    else if(cats.indexOf("soy")>=0 && cats.indexOf("veg")>=0) method = "煮物";
+    else if(cats.indexOf("meat")>=0) method = "焼く・炒める";
+    else if(cats.indexOf("veg")>=0) method = "スープ・和え物";
+
+    var coveredNutrients = [];
+    chosen.forEach(function(c){ c.helps.forEach(function(h){ if(deficient.indexOf(h)>=0 && coveredNutrients.indexOf(h)<0) coveredNutrients.push(h); }); });
+
+    var names = chosen.map(function(c){ return c.p.name; }).join("＋");
+    var minDays = Math.min.apply(null, chosen.map(function(c){ return c.days; }));
+    var expiryText = minDays<=0 ? "本日中に期限" : "あと"+minDays+"日で期限";
+    var reasonText = coveredNutrients.length ? coveredNutrients.map(function(k){ return NUTRIENT_LABEL[k]; }).join("・")+"を補給" : "食材を使い切る";
+    var icon = chosen[0].f ? (CAT_ICON[chosen[0].f.cat]||"🍽️") : "🍽️";
+
+    cards.push({ ic: icon, t: names+"の"+method, d: reasonText+" ・ "+expiryText });
+  }
+
+  /* fallback: remaining soon items not used in a combo above */
+  var leftover = tagged.filter(function(t){ return !usedIds[t.p.id]; }).sort(function(a,b){ return a.days-b.days; });
+  if(leftover.length && cards.length<4){
+    leftover.slice(0, 4-cards.length).forEach(function(t){
+      var d = t.days;
+      cards.push({
+        ic: t.f ? (CAT_ICON[t.f.cat]||"🍽️") : "⏳",
+        t: t.p.name+"を早めに使いましょう",
+        d: (d<=0 ? "賞味期限：今日まで" : "あと"+d+"日で期限") + " ・ 在庫 "+t.p.qty+t.p.unit
+      });
+    });
+  }
+  return cards.slice(0,4);
+}
+
+function renderHome(){
+  var el = document.getElementById("panel-home");
+  var targets = state.targets;
+  var totals = sumNutrients(todaysMeals());
+  var steps = todaysSteps();
+  var stepsExtra = extraKcalFromSteps(steps);
+
+  var meterKeys = ["kcal","protein","fat","carb","fiber","salt","veg"];
+  var metersHtml = meterKeys.map(function(k){
+    var consumed = totals[k];
+    var target = targets ? targets[k] : 0;
+    if(k==="kcal" && target) target += stepsExtra;
+    var pct = target ? Math.min(100, Math.round(consumed/target*100)) : 0;
+    var st = targets ? nutrientStatus(k, consumed, target) : "good";
+    var label = targets ? STATUS_LABEL[k][st] : "目標未設定";
+    var note = "";
+    if(k==="kcal" && stepsExtra) note = '<div class="note">歩数 '+steps.toLocaleString()+' 歩分 +'+stepsExtra+' kcal を加算</div>';
+    if(k==="protein" && targets){
+      var remaining = target - consumed;
+      if(remaining > 5) note = '<div class="note">あと'+Math.round(remaining)+'g目安：'+proteinEquivalentText(remaining)+'</div>';
+
+    }
+    return '<div class="meter">'
+      + '<div class="mh"><span class="name">'+NUTRIENT_LABEL[k]+'</span>'
+      + '<span class="nums">'+round1(consumed)+' / '+(target||"–")+' '+NUTRIENT_UNIT[k]+'</span></div>'
+      + '<div class="track"><div class="fill" style="width:'+pct+'%"></div></div>'
+      + '<span class="badge '+(targets?st:"warn")+'">'+label+'</span>'
+      + note
+      + '</div>';
+  }).join("");
+
+  var pantrySorted = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); }).slice(0,5);
+  var expiringHtml = pantrySorted.length ? '<div class="list">' + pantrySorted.map(rowItemHtml).join("") + '</div>'
+    : '<div class="empty"><div class="glyph">🧺</div><p>パントリーに食材を登録すると、賞味期限が近いものがここに並びます。</p></div>';
+
+  var suggestions = suggestionList();
+  var suggestHtml = suggestions.length ? '<div class="suggest-list">' + suggestions.map(function(s){
+      return '<div class="suggest-card"><div class="ic">'+s.ic+'</div><div><div class="t">'+s.t+'</div><div class="d">'+s.d+'</div></div></div>';
+    }).join("") + '</div>'
+    : '<div class="empty"><div class="glyph">🍽️</div><p>食材と食事記録がそろうと、おすすめの献立をここに表示します。</p></div>';
+
+  var kcalTile = '<div class="stat-tile"><div class="label">本日の摂取エネルギー</div><div class="value">'+Math.round(totals.kcal)+' <small>/ '+(targets?(targets.kcal+stepsExtra):"–")+' kcal</small></div></div>';
+  var vegTile = '<div class="stat-tile"><div class="label">本日の野菜摂取量</div><div class="value">'+Math.round(totals.veg)+' <small>/ '+(targets?targets.veg:350)+' g</small></div></div>';
+  var pantryTile = '<div class="stat-tile"><div class="label">パントリー在庫</div><div class="value">'+state.pantry.length+' <small>品目</small></div></div>';
+  var stepsTile = '<div class="stat-tile"><div class="label">本日の歩数（プロトタイプ用シミュレータ）</div><div class="value">'+steps.toLocaleString()+' <small>歩</small></div>'
+    + '<div class="step-presets" id="stepPresets">'
+    +   '<button type="button" data-steps="3000">デスクワーク<span>3,000歩</span></button>'
+    +   '<button type="button" data-steps="7000">普通<span>7,000歩</span></button>'
+    +   '<button type="button" data-steps="12000">よく歩いた<span>12,000歩</span></button>'
+    + '</div>'
+    + '<form id="stepsForm" class="quick-form"><input id="stepsInput" type="number" min="0" step="1" inputmode="numeric" placeholder="任意の数値" value="'+(steps||"")+'"><button type="submit" class="btn small">保存</button></form>'
+    + '<div class="note">実機のヘルスケア連携は将来のネイティブアプリ化で対応予定。今は動作確認用の簡易入力です。</div>'
+    + '</div>';
+
+  el.innerHTML =
+    '<div class="stat-row">'+kcalTile+vegTile+stepsTile+pantryTile+'</div>'
+    + (targets ? '' : '<div class="card"><div class="suggest-card"><div class="ic">⚙️</div><div><div class="t">目標値が未設定です</div><div class="d">「設定」タブでプロフィールを入力すると、栄養目標を自動計算します。</div></div></div></div>')
+    + '<div class="card"><div class="card-head"><h2>栄養バランス</h2></div><div class="sub">本日 '+todayStr()+' の合計摂取量</div><div class="meters">'+metersHtml+'</div></div>'
+    + '<div class="card"><div class="card-head"><h2>今夜のおすすめ</h2></div><div class="sub">期限が近い食材 × 不足栄養素から提案</div>'+suggestHtml+'</div>'
+    + '<div class="card"><div class="card-head"><h2>賞味期限が近い食材</h2></div><div class="sub">上位5件を表示</div>'+expiringHtml+'</div>';
+
+  document.getElementById("stepsForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var v = Math.max(0, Math.round(parseFloat(document.getElementById("stepsInput").value)||0));
+    state.steps = state.steps || {};
+    state.steps[todayStr()] = v;
+    persist(["steps"]); renderAll();
+  });
+  document.getElementById("stepPresets").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-steps]");
+    if(!b) return;
+    state.steps = state.steps || {};
+    state.steps[todayStr()] = parseInt(b.dataset.steps, 10);
+    persist(["steps"]); renderAll();
+  });
+}
+
+function expiryBadge(days){
+  if(days<=1) return {color:"var(--crit)", text: days<=0 ? "本日まで" : "あと1日"};
+  if(days<=3) return {color:"var(--warn)", text:"あと"+days+"日"};
+  return {color:"var(--good)", text:"あと"+days+"日"};
+}
+function rowItemHtml(p){
+  var d = daysUntil(p.expiry);
+  var b = expiryBadge(d);
+  var f = FOOD_BY_KEY[p.foodKey];
+  var icon = f ? CAT_ICON[f.cat] : "🍽️";
+  return '<div class="row-item" data-id="'+p.id+'">'
+    + '<div class="dot" style="background:'+b.color+'"></div>'
+    + '<div class="main"><div class="name">'+icon+' '+p.name+'</div><div class="meta">'+p.qty+p.unit+' ・ '+CAT_LABEL[p.category]+'</div></div>'
+    + '<span class="days" style="color:'+b.color+'">'+b.text+'</span>'
+    + '<span class="tag">'+p.expiry+'</span>'
+    + '<button class="btn ghost small consume-btn" data-id="'+p.id+'" title="使い切った">使い切った</button>'
+    + '</div>';
+}
+
+/* ---------- render: PANTRY ---------- */
+function foodOptionsHtml(selected){
+  return FOOD_DB.map(function(f){ return '<option value="'+f.key+'"'+(f.key===selected?" selected":"")+'>'+f.name+'</option>'; }).join("");
+}
+function renderPantry(){
+  var el = document.getElementById("panel-pantry");
+  var list = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
+  var listHtml = list.length ? '<div class="list">'+list.map(rowItemHtml).join("")+'</div>'
+    : '<div class="empty"><div class="glyph">🧺</div><p>まだ食材がありません。買い物から帰ったら登録しましょう。</p></div>';
+
+  el.innerHTML =
+    '<div class="card">'
+    + '<div class="card-head"><h2>食材を追加</h2></div><div class="sub">登録すると賞味期限順に一覧表示されます</div>'
+    + '<form id="pantryForm" class="inline">'
+    +   '<div class="field-row">'
+    +     '<div class="field"><label>食材</label><select id="pf_food">'+ '<option value="">— 選択してください —</option>' + foodOptionsHtml() + '<option value="__custom">カスタム入力…</option></select></div>'
+    +     '<div class="field"><label>&nbsp;</label><button type="button" id="pf_scanBtn" class="btn secondary">📷 バーコードでスキャン</button></div>'
+    +   '</div>'
+    +   '<div class="field" id="pf_customWrap" style="display:none"><label>食材名（自由入力）</label><input id="pf_custom" type="text" placeholder="例：ちくわ"></div>'
+    +   '<div id="pf_barcodeNote"></div>'
+    +   '<div class="field-row">'
+    +     '<div class="field"><label>数量</label><input id="pf_qty" type="number" min="0" step="0.1" placeholder="1" value="1"></div>'
+    +     '<div class="field"><label>単位</label><select id="pf_unit"><option>g</option><option>個</option><option>パック</option><option>本</option><option>枚</option><option>ml</option><option>その他</option></select></div>'
+    +     '<div class="field"><label>賞味期限</label><input id="pf_expiry" type="date"></div>'
+    +   '</div>'
+    +   '<div class="form-actions"><button type="submit" class="btn">パントリーに追加</button></div>'
+    + '</form>'
+    + '</div>'
+    + '<div class="card"><div class="card-head"><h2>在庫一覧</h2></div><div class="sub">'+list.length+' 品目 ・ 期限が近い順</div>'+listHtml+'</div>';
+
+  document.getElementById("pf_food").addEventListener("change", function(){
+    document.getElementById("pf_customWrap").style.display = this.value==="__custom" ? "" : "none";
+    var f = FOOD_BY_KEY[this.value];
+    if(f && f.unit) document.getElementById("pf_unit").value = f.unit;
+  });
+  var dEl = document.getElementById("pf_expiry");
+  var t = new Date(); t.setDate(t.getDate()+7);
+  dEl.value = t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");
+
+  document.getElementById("pf_scanBtn").addEventListener("click", function(){
+    openScanner(function(code){
+      var known = state.barcodes[code];
+      var noteEl = document.getElementById("pf_barcodeNote");
+      document.getElementById("pf_food").value = "__custom";
+      document.getElementById("pf_customWrap").style.display = "";
+      if(known){
+        document.getElementById("pf_custom").value = known.name;
+        if(known.unit) document.getElementById("pf_unit").value = known.unit;
+        noteEl.innerHTML = '<div class="barcode-note">前回の登録内容を自動入力しました（JAN: '+escapeAttr(code)+'）</div>';
+      } else {
+        document.getElementById("pf_custom").value = "";
+        document.getElementById("pf_custom").focus();
+        noteEl.innerHTML = '<div class="barcode-note">初めてのバーコードです（JAN: '+escapeAttr(code)+'）。食材名を入力すると次回から自動入力されます</div>';
+      }
+      pendingBarcode = code;
+    });
+  });
+
+  document.getElementById("pantryForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var foodKey = document.getElementById("pf_food").value;
+    if(!foodKey){ return; }
+    var custom = foodKey==="__custom";
+    var name = custom ? (document.getElementById("pf_custom").value||"").trim() : FOOD_BY_KEY[foodKey].name;
+    if(!name) return;
+    var qty = parseFloat(document.getElementById("pf_qty").value)||0;
+    var unit = document.getElementById("pf_unit").value;
+    var expiry = document.getElementById("pf_expiry").value;
+    if(!expiry) return;
+    var cat = custom ? "other" : FOOD_BY_KEY[foodKey].cat;
+    var barcodeChanged = false;
+    if(pendingBarcode){
+      state.barcodes[pendingBarcode] = { name: name, unit: unit };
+      barcodeChanged = true;
+    }
+    state.pantry.push({ id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, addedAt: Date.now() });
+    pendingBarcode = null;
+    var noteEl = document.getElementById("pf_barcodeNote");
+    if(noteEl) noteEl.innerHTML = "";
+    persist(barcodeChanged ? ["pantry","barcodes"] : ["pantry"]); renderAll();
+  });
+
+  el.addEventListener("click", function(e){
+    var btn = e.target.closest(".consume-btn");
+    if(!btn) return;
+    state.pantry = state.pantry.filter(function(p){ return p.id!==btn.dataset.id; });
+    persist(["pantry"]); renderAll();
+  });
+}
+
+/* ---------- render: MEALS ---------- */
+var mealsUi = { date: todayStr(), type: "breakfast" };
+function renderMeals(){
+  var el = document.getElementById("panel-meals");
+  var pillHtml = Object.keys(MEAL_LABEL).map(function(k){
+    return '<button data-type="'+k+'" class="'+(mealsUi.type===k?"active":"")+'">'+MEAL_LABEL[k]+'</button>';
+  }).join("");
+
+  var dayEntries = state.meals.filter(function(m){ return m.date===mealsUi.date; });
+  var typeEntries = dayEntries.filter(function(m){ return m.type===mealsUi.type; });
+  var dayTotals = sumNutrients(dayEntries);
+
+  var entriesHtml = typeEntries.length ? '<div class="list">' + typeEntries.map(function(m){
+      return '<div class="row-item" data-id="'+m.id+'">'
+        + '<div class="main"><div class="name">'+m.name+'</div><div class="meta">'+m.qty+'g ・ '+Math.round(m.nutrients.kcal)+' kcal ・ P'+round1(m.nutrients.protein)+' F'+round1(m.nutrients.fat)+' C'+round1(m.nutrients.carb)+'</div></div>'
+        + '<button class="btn ghost small meal-del" data-id="'+m.id+'">削除</button>'
+        + '</div>';
+    }).join("") + '</div>'
+    : '<div class="empty"><div class="glyph">🍴</div><p>この食事はまだ記録されていません。</p></div>';
+
+  var pantryMatches = state.pantry.filter(function(p){ return p.foodKey; });
+
+  var photoCard = "";
+  if(!sampleChecked){
+    /* still checking capability availability; render nothing to avoid a flash */
+  } else if(sampleUnavailable){
+    photoCard =
+      '<div class="card">'
+      + '<div class="card-head"><h2>写真から記録（AI解析）</h2></div>'
+      + '<div class="sub" style="margin-bottom:0">現在ご覧の環境ではAI解析機能を利用できません。claude.aiの通常のチャット画面（ブラウザ）でこのページを開くと利用できる場合があります。手動での記録は下のフォームから行えます。</div>'
+      + '</div>';
+  } else {
+    var pickerLabel = photoUi.file ? "写真を変更" : "写真を選択";
+    var accept = (sampleLimits && sampleLimits.images && sampleLimits.images.mediaTypes) ? sampleLimits.images.mediaTypes.join(",") : "image/*";
+    var resultsHtml = "";
+    if(photoUi.status==="loading"){
+      resultsHtml = '<div class="hint" style="margin-top:10px">解析中…(5〜30秒ほどかかります)</div>';
+    } else if(photoUi.status==="error"){
+      resultsHtml = '<div class="hint" style="margin-top:10px;color:var(--crit)">'+photoUi.error+'</div>';
+    } else if(photoUi.status==="done" && photoUi.items.length){
+      resultsHtml = '<div class="list" id="photoResults" style="margin-top:12px">' + photoUi.items.map(function(it, idx){
+          return '<div class="photo-row" data-idx="'+idx+'">'
+            + '<input type="checkbox" class="pi-check" data-idx="'+idx+'" checked>'
+            + '<div class="main"><div class="name">'+escapeAttr(it.name)+'</div>'
+            + '<div class="meta">AI推定 '+Math.round(it.estimatedGrams)+'g ・ '+Math.round(it.kcal)+'kcal ・ P'+round1(it.protein)+' F'+round1(it.fat)+' C'+round1(it.carb)+'</div></div>'
+            + '<div class="qty"><label>実量(g)</label><input type="number" class="pi-qty" data-idx="'+idx+'" min="0" step="1" value="'+Math.round(it.estimatedGrams)+'"></div>'
+            + '</div>';
+        }).join("") + '</div>'
+        + '<div class="form-actions" style="margin-top:10px">'
+        +   '<button type="button" id="photoCancelBtn" class="btn ghost small">破棄</button>'
+        +   '<button type="button" id="photoAddBtn" class="btn small">選択した項目を'+MEAL_LABEL[mealsUi.type]+'に追加</button>'
+        + '</div>';
+    }
+    photoCard =
+      '<div class="card">'
+      + '<div class="card-head"><h2>写真から記録（AI解析）</h2></div><div class="sub">料理写真から食品と栄養価をAIが概算します。追加前に内容を確認・修正できます</div>'
+      + '<div class="photo-picker">'
+      +   '<label for="photoInput" class="btn secondary small" style="cursor:pointer">'+pickerLabel+'</label>'
+      +   '<input id="photoInput" type="file" accept="'+accept+'" capture="environment" style="display:none">'
+      +   (photoUi.previewUrl ? '<img class="photo-preview" src="'+photoUi.previewUrl+'">' : '')
+      + '</div>'
+      + resultsHtml
+      + '</div>';
+  }
+
+  el.innerHTML =
+    photoCard
+    + '<div class="card">'
+    + '<div class="card-head"><h2>食事を記録</h2></div>'
+    + '<div class="field-row" style="margin-bottom:12px">'
+    +   '<div class="field"><label>日付</label><input id="mf_date" type="date" value="'+mealsUi.date+'"></div>'
+    + '</div>'
+    + '<div class="pill-tabs" id="mealTypeTabs">'+pillHtml+'</div>'
+    + '<div class="totals-bar">'
+    +   '<span>本日合計 ： <b>'+Math.round(dayTotals.kcal)+'</b> kcal</span>'
+    +   '<span>P <b>'+round1(dayTotals.protein)+'</b>g</span>'
+    +   '<span>F <b>'+round1(dayTotals.fat)+'</b>g</span>'
+    +   '<span>C <b>'+round1(dayTotals.carb)+'</b>g</span>'
+    +   '<span>食物繊維 <b>'+round1(dayTotals.fiber)+'</b>g</span>'
+    +   '<span>食塩 <b>'+round1(dayTotals.salt)+'</b>g</span>'
+    +   '<span>野菜 <b>'+Math.round(dayTotals.veg)+'</b>g</span>'
+    + '</div>'
+    + '<form id="mealForm" class="inline">'
+    +   '<div class="field-row">'
+    +     '<div class="field"><label>食品</label><select id="mf_food">'+ '<option value="">— 選択してください —</option>' + foodOptionsHtml() + '<option value="__custom">カスタム入力…</option></select></div>'
+    +     '<div class="field"><label>量 (g)</label><input id="mf_qty" type="number" min="0" step="1" value="100"></div>'
+    +   '</div>'
+    +   '<div class="field" id="mf_customWrap" style="display:none">'
+    +     '<label>カスタム食品：名前 / kcal・P・F・C・食物繊維・食塩(この量あたり)</label>'
+    +     '<div class="field-row">'
+    +       '<input id="mf_cname" type="text" placeholder="食品名">'
+    +       '<input id="mf_ckcal" type="number" step="1" placeholder="kcal">'
+    +       '<input id="mf_cp" type="number" step="0.1" placeholder="P g">'
+    +       '<input id="mf_cf" type="number" step="0.1" placeholder="F g">'
+    +       '<input id="mf_cc" type="number" step="0.1" placeholder="C g">'
+    +     '</div>'
+    +   '</div>'
+    +   (pantryMatches.length ? '<label class="checkline"><input type="checkbox" id="mf_deduct" checked> 在庫（g単位のもの）があれば自動で減らす</label>' : '')
+    +   '<div class="form-actions"><button type="submit" class="btn">'+MEAL_LABEL[mealsUi.type]+'に追加</button></div>'
+    + '</form>'
+    + '</div>'
+    + '<div class="card"><div class="card-head"><h2>'+MEAL_LABEL[mealsUi.type]+'の記録</h2></div><div class="sub">'+mealsUi.date+'</div>'+entriesHtml+'</div>';
+
+  document.getElementById("mf_date").addEventListener("change", function(){ mealsUi.date=this.value; renderMeals(); });
+  document.getElementById("mealTypeTabs").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-type]"); if(!b) return;
+    mealsUi.type = b.dataset.type; renderMeals();
+  });
+  document.getElementById("mf_food").addEventListener("change", function(){
+    document.getElementById("mf_customWrap").style.display = this.value==="__custom" ? "" : "none";
+  });
+  el.querySelector("#mealForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var foodKey = document.getElementById("mf_food").value;
+    if(!foodKey) return;
+    var qty = parseFloat(document.getElementById("mf_qty").value)||0;
+    var name, nutrients;
+    var pantryChanged = false;
+    if(foodKey==="__custom"){
+      name = (document.getElementById("mf_cname").value||"").trim();
+      if(!name) return;
+      nutrients = {
+        kcal: parseFloat(document.getElementById("mf_ckcal").value)||0,
+        protein: parseFloat(document.getElementById("mf_cp").value)||0,
+        fat: parseFloat(document.getElementById("mf_cf").value)||0,
+        carb: parseFloat(document.getElementById("mf_cc").value)||0,
+        fiber: 0, salt: 0, veg: 0
+      };
+    } else {
+      var f = FOOD_BY_KEY[foodKey];
+      name = f.name;
+      nutrients = nutrientsForFood(f, qty);
+      var deductEl = document.getElementById("mf_deduct");
+      if(deductEl && deductEl.checked){
+        var stock = state.pantry.find(function(p){ return p.foodKey===foodKey && p.unit==="g"; });
+        if(stock){ stock.qty = Math.max(0, round1(stock.qty-qty)); if(stock.qty===0){ state.pantry = state.pantry.filter(function(p){ return p!==stock; }); } pantryChanged = true; }
+      }
+    }
+    state.meals.push({ id: uid(), date: mealsUi.date, type: mealsUi.type, name: name, qty: qty, nutrients: nutrients, createdAt: Date.now() });
+    persist(pantryChanged ? ["meals","pantry"] : ["meals"]); renderAll();
+  });
+  el.addEventListener("click", function(e){
+    var b = e.target.closest(".meal-del"); if(!b) return;
+    state.meals = state.meals.filter(function(m){ return m.id!==b.dataset.id; });
+    persist(["meals"]); renderAll();
+  });
+
+  var photoInputEl = document.getElementById("photoInput");
+  if(photoInputEl){
+    photoInputEl.addEventListener("change", function(){
+      var file = this.files && this.files[0];
+      if(!file) return;
+      if(photoUi.previewUrl) URL.revokeObjectURL(photoUi.previewUrl);
+      photoUi.file = file;
+      photoUi.previewUrl = URL.createObjectURL(file);
+      runPhotoAnalysis(file);
+    });
+  }
+  var photoAddBtn = document.getElementById("photoAddBtn");
+  if(photoAddBtn){
+    photoAddBtn.addEventListener("click", function(){
+      var rows = el.querySelectorAll(".photo-row");
+      rows.forEach(function(row){
+        var idx = parseInt(row.dataset.idx,10);
+        var checked = row.querySelector(".pi-check").checked;
+        if(!checked) return;
+        var item = photoUi.items[idx];
+        var qty = parseFloat(row.querySelector(".pi-qty").value)||0;
+        var nutrients = nutrientsForPhotoItem(item, qty);
+        state.meals.push({ id: uid(), date: mealsUi.date, type: mealsUi.type, name: item.name, qty: qty, nutrients: nutrients, createdAt: Date.now() });
+      });
+      if(photoUi.previewUrl) URL.revokeObjectURL(photoUi.previewUrl);
+      photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
+      persist(["meals"]); renderAll();
+    });
+  }
+  var photoCancelBtn = document.getElementById("photoCancelBtn");
+  if(photoCancelBtn){
+    photoCancelBtn.addEventListener("click", function(){
+      if(photoUi.previewUrl) URL.revokeObjectURL(photoUi.previewUrl);
+      photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
+      renderMeals();
+    });
+  }
+}
+
+/* ---------- render: SETTINGS ---------- */
+function renderSettings(){
+  var el = document.getElementById("panel-settings");
+  var p = state.profile || { sex:"male", age:30, height:170, weight:65, activity:1.375, proteinPerKg:1.2 };
+  var t = state.targets;
+
+  el.innerHTML =
+    '<div class="card">'
+    + '<div class="card-head"><h2>プロフィール</h2></div><div class="sub">身長・体重・年齢から基準の栄養目標を計算します</div>'
+    + '<form id="profileForm" class="inline">'
+    +   '<div class="field-row">'
+    +     '<div class="field"><label>性別</label><select id="pr_sex"><option value="male"'+(p.sex==="male"?" selected":"")+'>男性</option><option value="female"'+(p.sex==="female"?" selected":"")+'>女性</option></select></div>'
+    +     '<div class="field"><label>年齢</label><input id="pr_age" type="number" min="10" max="100" value="'+p.age+'"></div>'
+    +   '</div>'
+    +   '<div class="field-row">'
+    +     '<div class="field"><label>身長 (cm)</label><input id="pr_height" type="number" min="100" max="230" value="'+p.height+'"></div>'
+    +     '<div class="field"><label>体重 (kg)</label><input id="pr_weight" type="number" min="30" max="200" step="0.1" value="'+p.weight+'"></div>'
+    +   '</div>'
+    +   '<div class="field"><label>活動量</label><select id="pr_activity">'
+    +      ACTIVITY_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(p.activity===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
+    +   '</select></div>'
+    +   (function(){
+        var isPreset = PROTEIN_GOAL_OPTIONS.some(function(o){ return o.v===p.proteinPerKg; });
+        return '<div class="field"><label>たんぱく質の目標</label><select id="pr_ppk_goal">'
+          + PROTEIN_GOAL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(p.proteinPerKg===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
+          + '<option value="__custom"'+(isPreset?"":" selected")+'>カスタム（数値を直接指定）</option>'
+          + '</select></div>'
+          + '<div class="field" id="pr_ppk_customWrap" style="'+(isPreset?"display:none":"")+'"><label>係数 (g / 体重kg)</label><input id="pr_ppk" type="number" min="0.6" max="2.5" step="0.1" value="'+p.proteinPerKg+'"></div>';
+      })()
+    +   '<div class="form-actions"><button type="submit" class="btn">目標を計算して保存</button></div>'
+    + '</form>'
+    + '</div>'
+    + (t ? (
+      '<div class="card"><div class="card-head"><h2>現在の栄養目標</h2></div><div class="sub">1日あたり・必要に応じて数値を直接調整できます</div>'
+      + '<form id="targetForm" class="inline"><div class="field-row">'
+      + Object.keys(NUTRIENT_LABEL).map(function(k){
+          var hint = k==="protein" ? '<div class="hint" style="margin-top:2px">目安：'+proteinEquivalentText(t.protein)+'</div>' : "";
+          return '<div class="field"><label>'+NUTRIENT_LABEL[k]+' ('+NUTRIENT_UNIT[k]+')</label><input class="tgt" data-key="'+k+'" type="number" step="1" value="'+t[k]+'">'+hint+'</div>';
+        }).join("")
+      + '</div><div class="form-actions"><button type="submit" class="btn secondary">目標値を保存</button></div></form></div>'
+    ) : '')
+    + '<div class="disclaimer">目標値は Mifflin-St Jeor 式などをもとにした簡易的な概算です。医療的な指導が必要な場合は専門家にご相談ください。食品成分値は日本食品標準成分表に基づく概算値を使用しています。</div>';
+
+  document.getElementById("pr_ppk_goal").addEventListener("change", function(){
+    document.getElementById("pr_ppk_customWrap").style.display = this.value==="__custom" ? "" : "none";
+  });
+
+  document.getElementById("profileForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var goalVal = document.getElementById("pr_ppk_goal").value;
+    var proteinPerKg = goalVal==="__custom"
+      ? (parseFloat(document.getElementById("pr_ppk").value)||1.2)
+      : parseFloat(goalVal);
+    var profile = {
+      sex: document.getElementById("pr_sex").value,
+      age: parseFloat(document.getElementById("pr_age").value)||30,
+      height: parseFloat(document.getElementById("pr_height").value)||170,
+      weight: parseFloat(document.getElementById("pr_weight").value)||65,
+      activity: parseFloat(document.getElementById("pr_activity").value)||1.375,
+      proteinPerKg: proteinPerKg
+    };
+    state.profile = profile;
+    state.targets = calcTargets(profile);
+    persist(["profile","targets"]); renderAll();
+  });
+
+  var tf = document.getElementById("targetForm");
+  if(tf){
+    tf.addEventListener("submit", function(e){
+      e.preventDefault();
+      var newTargets = Object.assign({}, state.targets);
+      el.querySelectorAll(".tgt").forEach(function(inp){ newTargets[inp.dataset.key] = parseFloat(inp.value)||0; });
+      state.targets = newTargets;
+      persist(["targets"]); renderAll();
+    });
+  }
+}
+
+/* ---------- render all ---------- */
+function renderAll(){
+  document.getElementById("todayLabel").textContent = todayStr();
+  renderHome();
+  renderPantry();
+  renderMeals();
+  renderSettings();
+}
+
+initDb();
+initSample();
+})();
+</script>
