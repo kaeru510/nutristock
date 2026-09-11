@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Barcode Test (cureco clone)</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px;background:#fafafa;color:#111}
+  h1{font-size:20px}
+  .box{border:1px solid #ccc;border-radius:8px;padding:12px;margin-bottom:16px;background:#fff}
+  video{width:100%;max-height:24rem;height:auto;background:#000}
+  button{padding:8px 16px;border-radius:6px;border:1px solid #2563eb;background:#2563eb;color:#fff;font-size:14px}
+  #log{white-space:pre-wrap;font-family:monospace;font-size:12px;background:#111;color:#0f0;padding:8px;border-radius:6px;max-height:200px;overflow:auto}
+</style>
+</head>
+<body>
+
+<h1>Barcode Test（cureco実装のクローン）</h1>
+<p style="font-size:13px;color:#555">tools.cureco.co.jp/tools/barcode-reader/ とほぼ同一のコードで、NutriStockを一切介さず単体でテストするページです。</p>
+
+<div class="box">
+  <h2 style="font-size:14px;margin:0 0 8px">📷 カメラから読取</h2>
+  <video id="video"></video>
+  <div style="margin-top:8px">
+    <button id="startBtn">📹 カメラ起動</button>
+    <button id="stopBtn" style="display:none;background:#dc2626;border-color:#dc2626">⏹ 停止</button>
+  </div>
+</div>
+
+<div class="box">
+  <h2 style="font-size:14px;margin:0 0 8px">検出結果</h2>
+  <div id="log">まだ何も検出していません</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script>
+(function(){
+  "use strict";
+  var log = document.getElementById("log");
+  var video = document.getElementById("video");
+  var controls = null;
+  var results = [];
+
+  function makeReader(){
+    var hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39, ZXing.BarcodeFormat.CODE_93,
+      ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.CODABAR,
+      ZXing.BarcodeFormat.QR_CODE, ZXing.BarcodeFormat.DATA_MATRIX,
+      ZXing.BarcodeFormat.PDF_417, ZXing.BarcodeFormat.AZTEC
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    return new ZXing.BrowserMultiFormatReader(hints);
+  }
+
+  function addResult(text, format){
+    results.unshift(new Date().toLocaleTimeString("ja-JP") + " [" + format + "] " + text);
+    log.textContent = results.slice(0, 50).join("\n");
+  }
+
+  async function start(){
+    document.getElementById("startBtn").style.display = "none";
+    document.getElementById("stopBtn").style.display = "";
+    try{
+      var reader = makeReader();
+      var devices = await reader.listVideoInputDevices();
+      var back = devices.find(function(d){ return /back|rear|environment/i.test(d.label); });
+      var deviceId = (back || devices[0]) ? (back || devices[0]).deviceId : undefined;
+      controls = await reader.decodeFromVideoDevice(deviceId, video, function(result, err){
+        if(result){
+          var fmt = ZXing.BarcodeFormat[result.getBarcodeFormat()] || "UNKNOWN";
+          addResult(result.getText(), fmt);
+        }
+      });
+    }catch(e){
+      log.textContent = "エラー: " + (e && e.message ? e.message : e);
+    }
+  }
+  function stop(){
+    if(controls){ controls.stop(); controls = null; }
+    document.getElementById("startBtn").style.display = "";
+    document.getElementById("stopBtn").style.display = "none";
+  }
+
+  document.getElementById("startBtn").addEventListener("click", start);
+  document.getElementById("stopBtn").addEventListener("click", stop);
+})();
+</script>
+
+</body>
+</html>
