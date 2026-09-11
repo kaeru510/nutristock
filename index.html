@@ -469,6 +469,7 @@ async function openScanner(onDetected){
         /* err fires continuously while no barcode is in frame — expected, ignore it */
       }
     ).then(function(){
+      console.log("[NutriStock] カメラ起動成功、読み取り待機中…");
       setScannerHint("商品のバーコード(JANコード)を枠内に映してください");
     }).catch(function(err){
       var detail = err && (err.name || err.message) ? (err.name||"")+" "+(err.message||"") : "";
@@ -481,6 +482,7 @@ async function openScanner(onDetected){
 }
 function handleBarcodeDetected(code){
   if(!scannerActive || !code) return;
+  console.log("[NutriStock] バーコード検知:", code);
   scannerActive = false;
   closeScanner();
   if(onBarcodeDetected) onBarcodeDetected(code);
@@ -861,6 +863,7 @@ function renderPantry(){
   document.getElementById("pf_scanBtn").addEventListener("click", function(){
     openScanner(function(code){
       var known = state.barcodes[code];
+      console.log("[NutriStock] パントリーで受信:", code, known ? "（登録済み: "+known.name+"）" : "（新規）");
       var noteEl = document.getElementById("pf_barcodeNote");
       document.getElementById("pf_food").value = "__custom";
       document.getElementById("pf_customWrap").style.display = "";
