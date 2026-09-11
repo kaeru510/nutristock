@@ -531,12 +531,30 @@ async function openScanner(onDetected){
     setScannerHint("バーコード読み取り機能を読み込めませんでした。通信環境を確認してください。" + (detail2 ? "（"+detail2+"）" : ""));
   }
 }
+function saveDetectionSnapshot(code){
+  if(location.search.indexOf("debug=1") === -1) return; /* only in debug mode, so normal use never triggers a surprise download */
+  var video = document.getElementById("scannerVideo");
+  if(!video || !video.videoWidth) return;
+  try{
+    var c = document.createElement("canvas");
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext("2d").drawImage(video, 0, 0);
+    var a = document.createElement("a");
+    a.href = c.toDataURL("image/jpeg", 0.85);
+    a.download = "barcode-scan-" + Date.now() + "-" + code + ".jpg";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    console.log("[NutriStock] スキャン時の画像を保存しました:", a.download);
+  }catch(e){ console.warn("[NutriStock] スナップショット保存失敗", e); }
+}
 function handleBarcodeDetected(code){
   if(!scannerActive || !code) return;
   /* EAN's own check digit already screens out most noise; a successful decode is rare
      enough in practice that requiring a second consecutive match made real reads almost
      never confirm, so accept on the first valid decode. */
   console.log("[NutriStock] バーコード検知:", code);
+  saveDetectionSnapshot(code);
   scannerActive = false;
   setScannerHint("認識しました！ (JAN: " + code + ")");
   setTimeout(function(){
