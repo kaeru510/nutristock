@@ -499,8 +499,16 @@ async function openScanner(onDetected){
     hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
     zxingReader = new ZXing.BrowserMultiFormatReader(hints);
     scannerActive = true;
-    zxingReader.decodeFromConstraints(
-      { audio:false, video: { facingMode: { ideal:"environment" }, width:{ ideal:1920 }, height:{ ideal:1080 } } },
+    var deviceId;
+    try{
+      var devices = await zxingReader.listVideoInputDevices();
+      var back = devices && devices.find(function(d){ return /back|rear|environment/i.test(d.label); });
+      /* only trust an explicit back-camera label match; otherwise let the facingMode fallback below decide
+         (device labels are blank before the first permission grant, so guessing devices[0] here could pick the front camera) */
+      deviceId = back ? back.deviceId : undefined;
+    }catch(e){ deviceId = undefined; }
+    zxingReader.decodeFromVideoDevice(
+      deviceId,
       "scannerVideo",
       function(result, err){
         if(!scannerActive) return;
