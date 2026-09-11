@@ -501,7 +501,18 @@ async function openScanner(onDetected){
   try{
     var ZXing = await loadZXing();
     var hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
+    /* broadened to match a reference implementation that reads noticeably more reliably;
+       results are filtered to EAN_13 only below, since a broader multi-format hint set
+       seems to change ZXing's internal per-row read persistence, not just which formats
+       it recognizes */
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39, ZXing.BarcodeFormat.CODE_93,
+      ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.CODABAR,
+      ZXing.BarcodeFormat.QR_CODE, ZXing.BarcodeFormat.DATA_MATRIX,
+      ZXing.BarcodeFormat.PDF_417, ZXing.BarcodeFormat.AZTEC
+    ]);
     hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
     zxingReader = new ZXing.BrowserMultiFormatReader(hints);
     scannerActive = true;
@@ -519,6 +530,11 @@ async function openScanner(onDetected){
       function(result, err){
         if(!scannerActive) return;
         if(result){
+          var fmt = result.getBarcodeFormat ? result.getBarcodeFormat() : null;
+          if(fmt !== ZXing.BarcodeFormat.EAN_13){
+            console.log("[NutriStock] EAN-13以外を検知したため無視:", fmt, result.getText());
+            return; /* JANコード(EAN-13)以外は商品バーコードとして扱わない */
+          }
           drawDetectionBox(result.getResultPoints ? result.getResultPoints() : null);
           handleBarcodeDetected(result.getText());
           return;
