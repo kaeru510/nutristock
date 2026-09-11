@@ -450,7 +450,6 @@ function setScannerHint(msg){
 
 async function openScanner(onDetected){
   onBarcodeDetected = onDetected;
-  pendingConfirmCode = null; pendingConfirmCount = 0;
   var overlay = document.getElementById("scannerOverlay");
   overlay.hidden = false;
   setScannerHint("カメラを起動しています…");
@@ -481,20 +480,12 @@ async function openScanner(onDetected){
     setScannerHint("バーコード読み取り機能を読み込めませんでした。通信環境を確認してください。" + (detail2 ? "（"+detail2+"）" : ""));
   }
 }
-var pendingConfirmCode = null;
-var pendingConfirmCount = 0;
 function handleBarcodeDetected(code){
   if(!scannerActive || !code) return;
-  if(code === pendingConfirmCode){
-    pendingConfirmCount++;
-  } else {
-    pendingConfirmCode = code;
-    pendingConfirmCount = 1;
-  }
-  console.log("[NutriStock] バーコード候補:", code, "("+pendingConfirmCount+"回目)");
-  if(pendingConfirmCount < 2) return; /* require the same code twice in a row before accepting it */
-  console.log("[NutriStock] バーコード確定:", code);
-  pendingConfirmCode = null; pendingConfirmCount = 0;
+  /* EAN's own check digit already screens out most noise; a successful decode is rare
+     enough in practice that requiring a second consecutive match made real reads almost
+     never confirm, so accept on the first valid decode. */
+  console.log("[NutriStock] バーコード検知:", code);
   scannerActive = false;
   closeScanner();
   if(onBarcodeDetected) onBarcodeDetected(code);
