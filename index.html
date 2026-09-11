@@ -160,9 +160,9 @@
   .scanner-box{background:var(--surface);border-radius:16px;padding:14px;max-width:440px;width:100%;box-shadow:var(--shadow)}
   .scanner-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
   .scanner-head span{font-weight:700;font-size:14px}
-  .scanner-viewport{position:relative;width:100%;aspect-ratio:4/3;background:#111;border-radius:10px;overflow:hidden}
-  .scanner-viewport video,.scanner-viewport canvas{width:100% !important;height:100% !important;object-fit:cover;position:absolute;top:0;left:0}
-  .scanner-viewport canvas{pointer-events:none}
+  .scanner-viewport{position:relative;width:100%;background:#111;border-radius:10px;overflow:hidden;line-height:0}
+  .scanner-viewport video{width:100%;height:auto;display:block}
+  .scanner-viewport canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
   .scanner-guide{position:absolute;left:8%;right:8%;top:38%;height:24%;border:2px solid rgba(255,255,255,.9);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none}
   .scanner-hint{font-size:12px;color:var(--ink-3);margin-top:8px;text-align:center}
   .barcode-note{font-size:11.5px;color:var(--accent-soft-ink);background:var(--accent-soft);border-radius:8px;padding:8px 10px;margin-top:2px}
