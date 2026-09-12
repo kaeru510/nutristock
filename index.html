@@ -873,7 +873,7 @@ function renderHome(){
   }).join("");
 
   var pantrySorted = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); }).slice(0,5);
-  var expiringHtml = pantrySorted.length ? '<div class="list">' + pantrySorted.map(rowItemHtml).join("") + '</div>'
+  var expiringHtml = pantrySorted.length ? '<div class="list">' + pantrySorted.map(function(p){ return rowItemHtml(p, false); }).join("") + '</div>'
     : '<div class="empty"><div class="glyph">🧺</div><p>パントリーに食材を登録すると、賞味期限が近いものがここに並びます。</p></div>';
 
   var suggestions = suggestionList();
@@ -923,17 +923,21 @@ function expiryBadge(days){
   if(days<=3) return {color:"var(--warn)", text:"あと"+days+"日"};
   return {color:"var(--good)", text:"あと"+days+"日"};
 }
-function rowItemHtml(p){
+function rowItemHtml(p, showActions){
   var d = daysUntil(p.expiry);
   var b = expiryBadge(d);
   var f = FOOD_BY_KEY[p.foodKey];
   var icon = f ? CAT_ICON[f.cat] : "🍽️";
+  var actions = showActions
+    ? '<button class="btn ghost small minus-btn" data-id="'+p.id+'" title="1つ使った">－1</button>'
+      + '<button class="btn ghost small consume-btn" data-id="'+p.id+'" title="残り全部を使い切った/廃棄した">🗑</button>'
+    : "";
   return '<div class="row-item" data-id="'+p.id+'">'
     + '<div class="dot" style="background:'+b.color+'"></div>'
     + '<div class="main"><div class="name">'+icon+' '+p.name+'</div><div class="meta">'+p.qty+p.unit+' ・ '+CAT_LABEL[p.category]+'</div></div>'
     + '<span class="days" style="color:'+b.color+'">'+b.text+'</span>'
     + '<span class="tag">'+p.expiry+'</span>'
-    + '<button class="btn ghost small consume-btn" data-id="'+p.id+'" title="使い切った">使い切った</button>'
+    + actions
     + '</div>';
 }
 
@@ -944,7 +948,7 @@ function foodOptionsHtml(selected){
 function renderPantry(){
   var el = document.getElementById("panel-pantry");
   var list = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
-  var listHtml = list.length ? '<div class="list">'+list.map(rowItemHtml).join("")+'</div>'
+  var listHtml = list.length ? '<div class="list">'+list.map(function(p){ return rowItemHtml(p, true); }).join("")+'</div>'
     : '<div class="empty"><div class="glyph">🧺</div><p>まだ食材がありません。買い物から帰ったら登録しましょう。</p></div>';
 
   el.innerHTML =
@@ -1044,6 +1048,16 @@ function renderPantry(){
   });
 
   el.addEventListener("click", function(e){
+    var minusBtn = e.target.closest(".minus-btn");
+    if(minusBtn){
+      var item = state.pantry.find(function(p){ return p.id===minusBtn.dataset.id; });
+      if(item){
+        item.qty = round1(item.qty - 1);
+        if(item.qty <= 0){ state.pantry = state.pantry.filter(function(p){ return p.id!==item.id; }); }
+      }
+      persist(["pantry"]); renderAll();
+      return;
+    }
     var btn = e.target.closest(".consume-btn");
     if(!btn) return;
     state.pantry = state.pantry.filter(function(p){ return p.id!==btn.dataset.id; });
