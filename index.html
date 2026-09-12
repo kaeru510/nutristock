@@ -296,7 +296,7 @@ function proteinEquivalentText(grams){
 
 /* ---------- state ---------- */
 function defaultState(){
-  return { profile:null, targets:null, pantry:[], meals:[], steps:{}, barcodes:{} };
+  return { profile:null, targets:null, pantry:[], meals:[], steps:{}, barcodes:{}, shoppingList:[], recentFoods:[] };
 }
 /* db snapshots deliver frozen data — deep-clone before merging into mutable local state */
 function deepClone(o){ return JSON.parse(JSON.stringify(o)); }
@@ -919,7 +919,8 @@ function renderHome(){
 }
 
 function expiryBadge(days){
-  if(days<=1) return {color:"var(--crit)", text: days<=0 ? "本日まで" : "あと1日"};
+  if(days<0) return {color:"var(--crit)", text: Math.abs(days)+"日超過"};
+  if(days<=1) return {color:"var(--crit)", text: days===0 ? "本日まで" : "あと1日"};
   if(days<=3) return {color:"var(--warn)", text:"あと"+days+"日"};
   return {color:"var(--good)", text:"あと"+days+"日"};
 }
@@ -941,20 +942,75 @@ function rowItemHtml(p, showActions){
     + '</div>';
 }
 
+function addToShoppingList(name){
+  if(!name) return;
+  state.shoppingList = state.shoppingList.filter(function(s){ return s.name !== name; });
+  state.shoppingList.unshift({ id: uid(), name: name, addedAt: Date.now() });
+  if(state.shoppingList.length > 30) state.shoppingList.length = 30;
+}
+function pushRecentFood(entry){
+  state.recentFoods = state.recentFoods.filter(function(r){ return r.name !== entry.name; });
+  state.recentFoods.unshift(entry);
+  if(state.recentFoods.length > 8) state.recentFoods.length = 8;
+}
+
 /* ---------- render: PANTRY ---------- */
+var pantryUi = { category: "all", search: "" };
 function foodOptionsHtml(selected){
   return FOOD_DB.map(function(f){ return '<option value="'+f.key+'"'+(f.key===selected?" selected":"")+'>'+f.name+'</option>'; }).join("");
 }
 function renderPantry(){
   var el = document.getElementById("panel-pantry");
-  var list = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
-  var listHtml = list.length ? '<div class="list">'+list.map(function(p){ return rowItemHtml(p, true); }).join("")+'</div>'
-    : '<div class="empty"><div class="glyph">🧺</div><p>まだ食材がありません。買い物から帰ったら登録しましょう。</p></div>';
+
+  var presentCats = {};
+  state.pantry.forEach(function(p){ presentCats[p.category] = true; });
+  var catKeys = Object.keys(CAT_LABEL).filter(function(k){ return presentCats[k]; });
+
+  var filtered = state.pantry.filter(function(p){
+    var matchCat = pantryUi.category==="all" || p.category===pantryUi.category;
+    var matchSearch = !pantryUi.search || p.name.toLowerCase().indexOf(pantryUi.search.toLowerCase())>=0;
+    return matchCat && matchSearch;
+  }).sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
+  var expiredList = filtered.filter(function(p){ return daysUntil(p.expiry) < 0; });
+  var activeList = filtered.filter(function(p){ return daysUntil(p.expiry) >= 0; });
+
+  var expiredHtml = expiredList.length
+    ? '<div class="card" style="border-color:var(--crit)"><div class="card-head"><h2 style="color:var(--crit)">⚠️ 期限切れ（'+expiredList.length+'件）</h2></div><div class="sub">早めに使うか、処分してください</div><div class="list">'+expiredList.map(function(p){ return rowItemHtml(p, true); }).join("")+'</div></div>'
+    : '';
+
+  var listHtml = activeList.length ? '<div class="list">'+activeList.map(function(p){ return rowItemHtml(p, true); }).join("")+'</div>'
+    : (state.pantry.length ? '<div class="empty"><div class="glyph">🔍</div><p>条件に一致する食材がありません。</p></div>' : '<div class="empty"><div class="glyph">🧺</div><p>まだ食材がありません。買い物から帰ったら登録しましょう。</p></div>');
+
+  var filterHtml = state.pantry.length ? (
+    '<div class="pill-tabs" id="pantryCatFilter">'
+    + '<button data-cat="all" class="'+(pantryUi.category==="all"?"active":"")+'">すべて</button>'
+    + catKeys.map(function(k){ return '<button data-cat="'+k+'" class="'+(pantryUi.category===k?"active":"")+'">'+CAT_LABEL[k]+'</button>'; }).join("")
+    + '</div>'
+    + '<input type="text" id="pantrySearch" placeholder="食材名で検索" value="'+escapeAttr(pantryUi.search)+'" style="width:100%;padding:9px 10px;border-radius:9px;border:1px solid var(--border);background:var(--surface);font-size:13.5px;margin-bottom:14px">'
+  ) : '';
+
+  var recentHtml = state.recentFoods.length
+    ? '<div class="field"><label>最近使った食材</label><div class="pill-tabs" id="recentFoodChips" style="margin-bottom:0">'
+      + state.recentFoods.map(function(r,idx){ return '<button type="button" data-idx="'+idx+'">'+r.name+'</button>'; }).join("")
+      + '</div></div>'
+    : '';
+
+  var shoppingHtml =
+    '<div class="card">'
+    + '<div class="card-head"><h2>🛒 次に買うものリスト</h2></div><div class="sub">使い切った食材が自動で追加されます</div>'
+    + '<form id="shoppingForm" class="quick-form" style="margin-top:0"><input type="text" id="shoppingInput" placeholder="買うものを追加"><button type="submit" class="btn small">追加</button></form>'
+    + (state.shoppingList.length
+        ? '<div class="list" style="margin-top:12px">' + state.shoppingList.map(function(s){
+            return '<div class="row-item" data-id="'+s.id+'"><div class="main"><div class="name">'+escapeAttr(s.name)+'</div></div><button class="btn ghost small shopping-del" data-id="'+s.id+'">✓ 買った</button></div>';
+          }).join("") + '</div>'
+        : '<div class="empty"><div class="glyph">📝</div><p>今のところ何もありません。</p></div>');
+  shoppingHtml += '</div>';
 
   el.innerHTML =
     '<div class="card">'
     + '<div class="card-head"><h2>食材を追加</h2></div><div class="sub">登録すると賞味期限順に一覧表示されます</div>'
     + '<form id="pantryForm" class="inline">'
+    +   recentHtml
     +   '<div class="field-row">'
     +     '<div class="field"><label>食材</label><select id="pf_food">'+ '<option value="">— 選択してください —</option>' + foodOptionsHtml() + '<option value="__custom">カスタム入力…</option></select></div>'
     +     '<div class="field"><label>&nbsp;</label><button type="button" id="pf_scanBtn" class="btn secondary">📷 バーコードでスキャン</button></div>'
@@ -969,12 +1025,57 @@ function renderPantry(){
     +   '<div class="form-actions"><button type="submit" class="btn">パントリーに追加</button></div>'
     + '</form>'
     + '</div>'
-    + '<div class="card"><div class="card-head"><h2>在庫一覧</h2></div><div class="sub">'+list.length+' 品目 ・ 期限が近い順</div>'+listHtml+'</div>';
+    + shoppingHtml
+    + expiredHtml
+    + '<div class="card"><div class="card-head"><h2>在庫一覧</h2></div><div class="sub">'+activeList.length+' 品目 ・ 期限が近い順</div>'+filterHtml+listHtml+'</div>';
 
   document.getElementById("pf_food").addEventListener("change", function(){
     document.getElementById("pf_customWrap").style.display = this.value==="__custom" ? "" : "none";
     var f = FOOD_BY_KEY[this.value];
     if(f && f.unit) document.getElementById("pf_unit").value = f.unit;
+  });
+
+  if(state.pantry.length){
+    document.getElementById("pantryCatFilter").addEventListener("click", function(e){
+      var b = e.target.closest("button[data-cat]"); if(!b) return;
+      pantryUi.category = b.dataset.cat; renderPantry();
+    });
+    document.getElementById("pantrySearch").addEventListener("input", function(){
+      pantryUi.search = this.value; renderPantry();
+    });
+  }
+  var recentEl = document.getElementById("recentFoodChips");
+  if(recentEl){
+    recentEl.addEventListener("click", function(e){
+      var b = e.target.closest("button[data-idx]"); if(!b) return;
+      var r = state.recentFoods[parseInt(b.dataset.idx,10)];
+      if(!r) return;
+      if(r.foodKey && FOOD_BY_KEY[r.foodKey]){
+        document.getElementById("pf_food").value = r.foodKey;
+        document.getElementById("pf_customWrap").style.display = "none";
+      } else {
+        document.getElementById("pf_food").value = "__custom";
+        document.getElementById("pf_customWrap").style.display = "";
+        document.getElementById("pf_custom").value = r.name;
+      }
+      document.getElementById("pf_unit").value = r.unit;
+    });
+  }
+
+  document.getElementById("shoppingForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var input = document.getElementById("shoppingInput");
+    var name = (input.value||"").trim();
+    if(!name) return;
+    addToShoppingList(name);
+    input.value = "";
+    persist(["shoppingList"]); renderAll();
+  });
+  el.addEventListener("click", function(e){
+    var delBtn = e.target.closest(".shopping-del");
+    if(!delBtn) return;
+    state.shoppingList = state.shoppingList.filter(function(s){ return s.id!==delBtn.dataset.id; });
+    persist(["shoppingList"]); renderAll();
   });
   var dEl = document.getElementById("pf_expiry");
   var t = new Date(); t.setDate(t.getDate()+7);
@@ -1041,10 +1142,12 @@ function renderPantry(){
       barcodeChanged = true;
     }
     state.pantry.push({ id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, addedAt: Date.now() });
+    pushRecentFood({ name: name, foodKey: custom?null:foodKey, unit: unit, category: cat });
+    state.shoppingList = state.shoppingList.filter(function(s){ return s.name !== name; }); /* bought it, drop from the list if present */
     pendingBarcode = null;
     var noteEl = document.getElementById("pf_barcodeNote");
     if(noteEl) noteEl.innerHTML = "";
-    persist(barcodeChanged ? ["pantry","barcodes"] : ["pantry"]); renderAll();
+    persist(barcodeChanged ? ["pantry","barcodes","recentFoods","shoppingList"] : ["pantry","recentFoods","shoppingList"]); renderAll();
   });
 
   el.addEventListener("click", function(e){
@@ -1053,15 +1156,20 @@ function renderPantry(){
       var item = state.pantry.find(function(p){ return p.id===minusBtn.dataset.id; });
       if(item){
         item.qty = round1(item.qty - 1);
-        if(item.qty <= 0){ state.pantry = state.pantry.filter(function(p){ return p.id!==item.id; }); }
+        if(item.qty <= 0){
+          state.pantry = state.pantry.filter(function(p){ return p.id!==item.id; });
+          addToShoppingList(item.name);
+        }
       }
-      persist(["pantry"]); renderAll();
+      persist(["pantry","shoppingList"]); renderAll();
       return;
     }
     var btn = e.target.closest(".consume-btn");
     if(!btn) return;
+    var consumed = state.pantry.find(function(p){ return p.id===btn.dataset.id; });
     state.pantry = state.pantry.filter(function(p){ return p.id!==btn.dataset.id; });
-    persist(["pantry"]); renderAll();
+    if(consumed) addToShoppingList(consumed.name);
+    persist(["pantry","shoppingList"]); renderAll();
   });
 }
 
