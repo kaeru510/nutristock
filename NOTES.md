@@ -1,15 +1,16 @@
 # NutriStock 開発メモ
 
-## 公開先（2つ存在する）
+## 公開先
 
-1. **Artifact版**（claude.ai経由）: https://claude.ai/code/artifact/c3e95274-3a59-4b08-98cd-92ffbac7a7ad
-   - ソースはこのフォルダの旧 `nutristock.html`（GitHub化した際に `index.html` へリネーム済み。Artifact版を更新する場合は `index.html` を同じURLに再公開する）
-   - `db`（クラウド保存）・`sample`（AI解析、現状アカウント制限で不可）が使える
-2. **GitHub Pages版**（本番URL、2026-09-11〜）: https://kaeru510.github.io/nutristock/
-   - ソース: `index.html`（このフォルダ、gitリポジトリ）。リポジトリ: https://github.com/kaeru510/nutristock （個人用アカウント。研究室のGitHubアカウントとは意図的に分離）
-   - iframeに埋め込まれないトップレベルページなので、**カメラの権限問題が解消される**（バーコードスキャンがスマホでも動く）
-   - 一方で `db`/`sample` は使えない（`window.claude` が存在しないため）。データはブラウザごとのlocalStorageのみ
-   - デバッグ用: URLに `?debug=1` を付けると、画面上にコンソール(Eruda)が出せる／バーコード読み取り成功時に「📤 画像を共有」ボタンが数秒表示され、その場のカメラ映像をiOSの共有シート経由で保存・送信できる
+**本番: GitHub Pages版**（2026-09-12〜、正式に本番採用）: https://kaeru510.github.io/nutristock/
+- ソース: `index.html`（このフォルダ、gitリポジトリ）。リポジトリ: https://github.com/kaeru510/nutristock （個人用アカウント。研究室のGitHubアカウントとは意図的に分離）
+- iframeに埋め込まれないトップレベルページなので、**カメラの権限問題が解消される**（バーコードスキャンがスマホでも動く）
+- 一方で `db`/`sample` は使えない（`window.claude` が存在しないため）。**データはブラウザごとのlocalStorageのみ**（端末間の自動同期なし）。カメラの安定動作を優先し、意図的にこのトレードオフを選んだ
+- デバッグ用: URLに `?debug=1` を付けると、画面上にコンソール(Eruda)が出せる／バーコード読み取り成功時に「📤 画像を共有」ボタンが数秒表示され、その場のカメラ映像をiOSの共有シート経由で保存・送信できる
+
+**廃止: Artifact版**（claude.ai経由）: https://claude.ai/code/artifact/c3e95274-3a59-4b08-98cd-92ffbac7a7ad
+- 2026-09-12以降、更新を終了。開くと「GitHub Pages版へどうぞ」という案内ページだけが表示される（削除機能が無いため上書きで対応）
+- それ以前は`db`（クラウド保存）・`sample`（AI解析）が使える構成だったが、スマホでのカメラ権限問題が解決できず、GitHub Pages版に一本化した
 
 更新の流れ（GitHub Pages版）: `index.html` を編集 → `cd myfolder/NutriStock && git add index.html && git commit -m "..." && git push`（リモート: `https://github.com/kaeru510/nutristock.git`、ローカルのgit identityはこのリポジトリだけ `kaeru510` / `kaeru510@users.noreply.github.com` に設定済み）。反映まで1〜2分。
 
@@ -22,10 +23,11 @@
 | 期限×不足栄養素の献立提案 | ✅ 動作 | タンパク源＋野菜の組み合わせ提案ロジック |
 | 食事記録（手入力） | ✅ 動作 | |
 | 歩数シミュレータ（プリセット/手入力） | ✅ 動作 | 実機ヘルスケア連携は不可（下記） |
-| バーコードスキャン（JANコード読み取り） | ✅ GitHub Pages版で動作 / ⚠️ Artifact版はスマホ不可 | 詳細は下記「バーコードスキャン実装メモ」 |
+| バーコードスキャン（JANコード読み取り） | ✅ 動作（縦向き推奨） | 詳細は下記「バーコードスキャン実装メモ」 |
+| 買い物リスト・期限切れ分離・カテゴリ検索・最近使った食材 | ✅ 動作 | 2026-09-12追加 |
 | バーコード→商品名の自動学習 | ✅ 動作 | 商品DBには接続不可なので、一度手入力すれば次回から自動入力される方式 |
 | 保存時のトースト通知 | ✅ 動作 | 「✓ 保存しました」を画面下に表示 |
-| AI写真解析（食事記録） | ❌ 現状不可 | 実装済みだがアカウント側の制限で保留中（下記）。GitHub Pages版では原理的にも不可 |
+| AI写真解析（食事記録） | ❌ 現状不可 | Artifact版では実装済みだったがアカウント側の制限で保留（回答待ち）。本番のGitHub Pages版では`window.claude`が無いため原理的にも不可 |
 | Apple ヘルスケア連携 | ❌ 不可能 | 原理的にWeb版からは到達不可 |
 
 ## プラットフォーム側の制約（コードでは解決不可）
