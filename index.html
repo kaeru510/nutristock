@@ -53,6 +53,7 @@
   nav.tabs button{flex:1;padding:10px 6px;border:none;background:transparent;border-radius:10px;color:var(--ink-2);font-size:13.5px;font-weight:500;cursor:pointer;transition:background .15s,color .15s}
   nav.tabs button.active{background:var(--surface);color:var(--accent-soft-ink);box-shadow:var(--shadow);font-weight:700}
   nav.tabs button:hover:not(.active){color:var(--ink)}
+  .tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;margin-left:4px;border-radius:999px;background:var(--crit);color:#fff;font-size:10px;font-weight:700;vertical-align:middle}
 
   section.panel{display:none}
   section.panel.active{display:block;animation:fade .18s ease}
@@ -185,7 +186,7 @@
 
   <nav class="tabs" id="tabs">
     <button data-tab="home" class="active">ホーム</button>
-    <button data-tab="pantry">パントリー</button>
+    <button data-tab="pantry">パントリー<span class="tab-badge" id="pantryBadge" hidden>0</span></button>
     <button data-tab="meals">食事記録</button>
     <button data-tab="settings">設定</button>
   </nav>
@@ -822,8 +823,11 @@ function suggestionList(){
     var expiryText = minDays<=0 ? "本日中に期限" : "あと"+minDays+"日で期限";
     var reasonText = coveredNutrients.length ? coveredNutrients.map(function(k){ return NUTRIENT_LABEL[k]; }).join("・")+"を補給" : "食材を使い切る";
     var icon = chosen[0].f ? (CAT_ICON[chosen[0].f.cat]||"🍽️") : "🍽️";
+    var items = chosen.filter(function(c){ return c.p.foodKey; }).map(function(c){
+      return { foodKey: c.p.foodKey, qty: defaultServingGrams(c.f.cat), pantryId: c.p.id, unit: c.p.unit };
+    });
 
-    cards.push({ ic: icon, t: names+"の"+method, d: reasonText+" ・ "+expiryText });
+    cards.push({ ic: icon, t: names+"の"+method, d: reasonText+" ・ "+expiryText, items: items });
   }
 
   /* fallback: remaining soon items not used in a combo above */
@@ -834,11 +838,17 @@ function suggestionList(){
       cards.push({
         ic: t.f ? (CAT_ICON[t.f.cat]||"🍽️") : "⏳",
         t: t.p.name+"を早めに使いましょう",
-        d: (d<=0 ? "賞味期限：今日まで" : "あと"+d+"日で期限") + " ・ 在庫 "+t.p.qty+t.p.unit
+        d: (d<=0 ? "賞味期限：今日まで" : "あと"+d+"日で期限") + " ・ 在庫 "+t.p.qty+t.p.unit,
+        items: t.f ? [{ foodKey: t.p.foodKey, qty: defaultServingGrams(t.f.cat), pantryId: t.p.id, unit: t.p.unit }] : []
       });
     });
   }
   return cards.slice(0,4);
+}
+function defaultServingGrams(cat){
+  if(cat==="grain") return 150;
+  if(cat==="veg") return 80;
+  return 100;
 }
 
 function renderHome(){
@@ -877,8 +887,9 @@ function renderHome(){
     : '<div class="empty"><div class="glyph">🧺</div><p>パントリーに食材を登録すると、賞味期限が近いものがここに並びます。</p></div>';
 
   var suggestions = suggestionList();
-  var suggestHtml = suggestions.length ? '<div class="suggest-list">' + suggestions.map(function(s){
-      return '<div class="suggest-card"><div class="ic">'+s.ic+'</div><div><div class="t">'+s.t+'</div><div class="d">'+s.d+'</div></div></div>';
+  var suggestHtml = suggestions.length ? '<div class="suggest-list">' + suggestions.map(function(s, idx){
+      var logBtn = (s.items && s.items.length) ? '<button type="button" class="btn small suggest-log-btn" data-idx="'+idx+'" style="margin-top:8px">これを記録する</button>' : '';
+      return '<div class="suggest-card"><div class="ic">'+s.ic+'</div><div><div class="t">'+s.t+'</div><div class="d">'+s.d+'</div>'+logBtn+'</div></div>';
     }).join("") + '</div>'
     : '<div class="empty"><div class="glyph">🍽️</div><p>食材と食事記録がそろうと、おすすめの献立をここに表示します。</p></div>';
 
@@ -915,6 +926,30 @@ function renderHome(){
     state.steps = state.steps || {};
     state.steps[todayStr()] = parseInt(b.dataset.steps, 10);
     persist(["steps"]); renderAll();
+  });
+
+  el.querySelectorAll(".suggest-log-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var s = suggestions[parseInt(btn.dataset.idx, 10)];
+      if(!s || !s.items || !s.items.length) return;
+      var pantryChanged = false;
+      s.items.forEach(function(item){
+        var f = FOOD_BY_KEY[item.foodKey];
+        if(!f) return;
+        var nutrients = nutrientsForFood(f, item.qty);
+        state.meals.push({ id: uid(), date: todayStr(), type: "dinner", name: f.name, qty: item.qty, nutrients: nutrients, createdAt: Date.now() });
+        if(item.unit === "g"){
+          var stock = state.pantry.find(function(p){ return p.id === item.pantryId; });
+          if(stock){
+            stock.qty = Math.max(0, round1(stock.qty - item.qty));
+            if(stock.qty === 0){ state.pantry = state.pantry.filter(function(p){ return p !== stock; }); }
+            pantryChanged = true;
+          }
+        }
+      });
+      persist(pantryChanged ? ["meals","pantry"] : ["meals"]);
+      renderAll();
+    });
   });
 }
 
@@ -1464,12 +1499,20 @@ function renderSettings(){
 }
 
 /* ---------- render all ---------- */
+function updatePantryTabBadge(){
+  var count = state.pantry.filter(function(p){ return daysUntil(p.expiry) <= 3; }).length;
+  var badge = document.getElementById("pantryBadge");
+  if(!badge) return;
+  if(count > 0){ badge.textContent = count > 99 ? "99+" : count; badge.hidden = false; }
+  else { badge.hidden = true; }
+}
 function renderAll(){
   document.getElementById("todayLabel").textContent = todayStr();
   renderHome();
   renderPantry();
   renderMeals();
   renderSettings();
+  updatePantryTabBadge();
 }
 
 initDb();
