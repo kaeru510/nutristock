@@ -1071,12 +1071,15 @@ function renderPantry(){
     input.value = "";
     persist(["shoppingList"]); renderAll();
   });
-  el.addEventListener("click", function(e){
-    var delBtn = e.target.closest(".shopping-del");
-    if(!delBtn) return;
-    state.shoppingList = state.shoppingList.filter(function(s){ return s.id!==delBtn.dataset.id; });
-    persist(["shoppingList"]); renderAll();
-  });
+  if(!el.dataset.shoppingBound){
+    el.dataset.shoppingBound = "1";
+    el.addEventListener("click", function(e){
+      var delBtn = e.target.closest(".shopping-del");
+      if(!delBtn) return;
+      state.shoppingList = state.shoppingList.filter(function(s){ return s.id!==delBtn.dataset.id; });
+      persist(["shoppingList"]); renderAll();
+    });
+  }
   var dEl = document.getElementById("pf_expiry");
   var t = new Date(); t.setDate(t.getDate()+7);
   dEl.value = t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");
@@ -1150,27 +1153,30 @@ function renderPantry(){
     persist(barcodeChanged ? ["pantry","barcodes","recentFoods","shoppingList"] : ["pantry","recentFoods","shoppingList"]); renderAll();
   });
 
-  el.addEventListener("click", function(e){
-    var minusBtn = e.target.closest(".minus-btn");
-    if(minusBtn){
-      var item = state.pantry.find(function(p){ return p.id===minusBtn.dataset.id; });
-      if(item){
-        item.qty = round1(item.qty - 1);
-        if(item.qty <= 0){
-          state.pantry = state.pantry.filter(function(p){ return p.id!==item.id; });
-          addToShoppingList(item.name);
+  if(!el.dataset.stockBound){
+    el.dataset.stockBound = "1";
+    el.addEventListener("click", function(e){
+      var minusBtn = e.target.closest(".minus-btn");
+      if(minusBtn){
+        var item = state.pantry.find(function(p){ return p.id===minusBtn.dataset.id; });
+        if(item){
+          item.qty = round1(item.qty - 1);
+          if(item.qty <= 0){
+            state.pantry = state.pantry.filter(function(p){ return p.id!==item.id; });
+            addToShoppingList(item.name);
+          }
         }
+        persist(["pantry","shoppingList"]); renderAll();
+        return;
       }
+      var btn = e.target.closest(".consume-btn");
+      if(!btn) return;
+      var consumed = state.pantry.find(function(p){ return p.id===btn.dataset.id; });
+      state.pantry = state.pantry.filter(function(p){ return p.id!==btn.dataset.id; });
+      if(consumed) addToShoppingList(consumed.name);
       persist(["pantry","shoppingList"]); renderAll();
-      return;
-    }
-    var btn = e.target.closest(".consume-btn");
-    if(!btn) return;
-    var consumed = state.pantry.find(function(p){ return p.id===btn.dataset.id; });
-    state.pantry = state.pantry.filter(function(p){ return p.id!==btn.dataset.id; });
-    if(consumed) addToShoppingList(consumed.name);
-    persist(["pantry","shoppingList"]); renderAll();
-  });
+    });
+  }
 }
 
 /* ---------- render: MEALS ---------- */
@@ -1314,11 +1320,14 @@ function renderMeals(){
     state.meals.push({ id: uid(), date: mealsUi.date, type: mealsUi.type, name: name, qty: qty, nutrients: nutrients, createdAt: Date.now() });
     persist(pantryChanged ? ["meals","pantry"] : ["meals"]); renderAll();
   });
-  el.addEventListener("click", function(e){
-    var b = e.target.closest(".meal-del"); if(!b) return;
-    state.meals = state.meals.filter(function(m){ return m.id!==b.dataset.id; });
-    persist(["meals"]); renderAll();
-  });
+  if(!el.dataset.mealDelBound){
+    el.dataset.mealDelBound = "1";
+    el.addEventListener("click", function(e){
+      var b = e.target.closest(".meal-del"); if(!b) return;
+      state.meals = state.meals.filter(function(m){ return m.id!==b.dataset.id; });
+      persist(["meals"]); renderAll();
+    });
+  }
 
   var photoInputEl = document.getElementById("photoInput");
   if(photoInputEl){
