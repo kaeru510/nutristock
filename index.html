@@ -162,7 +162,6 @@
   .scanner-head span{font-weight:700;font-size:14px}
   .scanner-viewport{position:relative;width:100%;background:#111;border-radius:10px;overflow:hidden;line-height:0}
   .scanner-viewport video{width:100%;height:auto;display:block}
-  .scanner-viewport canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
   .scanner-guide{position:absolute;top:8%;bottom:8%;left:38%;width:24%;border:2px solid rgba(255,255,255,.9);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none}
   .scanner-hint{font-size:12px;color:var(--ink-3);margin-top:8px;text-align:center}
   .barcode-note{font-size:11.5px;color:var(--accent-soft-ink);background:var(--accent-soft);border-radius:8px;padding:8px 10px;margin-top:2px}
@@ -206,8 +205,8 @@
 
 <div class="scanner-overlay" id="scannerOverlay" hidden>
   <div class="scanner-box">
-    <div class="scanner-head"><span>バーコードをスキャン</span><button type="button" id="scannerClose" class="btn ghost small">閉じる</button></div>
-    <div class="scanner-viewport"><video id="scannerVideo"></video><canvas id="scannerCanvas"></canvas><div class="scanner-guide"></div></div>
+    <div class="scanner-head"><span>バーコードをスキャン</span><span style="display:flex;gap:6px"><button type="button" id="scannerFlipBtn" class="btn ghost small" style="display:none">🔄 カメラ切替</button><button type="button" id="scannerClose" class="btn ghost small">閉じる</button></span></div>
+    <div class="scanner-viewport"><video id="scannerVideo"></video><div class="scanner-guide"></div></div>
     <div class="scanner-hint" id="scannerHint">バーコードを縦向き(90度回転)にして枠に合わせてください。正面のままだと読み取れないことが多いです</div>
     <button type="button" id="scannerShareBtn" class="btn small" style="margin-top:10px;display:none">📤 画像を共有</button>
     <button type="button" id="scannerManualShareBtn" class="btn secondary small" style="margin-top:10px;display:none">📷 今の映像を保存（失敗中でもOK）</button>
@@ -452,47 +451,45 @@ function setScannerHint(msg){
   if(h) h.textContent = msg;
 }
 
-function clearDetectionBox(){
-  var canvas = document.getElementById("scannerCanvas");
-  if(!canvas) return;
-  var ctx = canvas.getContext("2d");
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+var preferredCameraId = null;
+try{ preferredCameraId = localStorage.getItem("nutristock_cameraId") || null; }catch(e){}
+var availableCameras = [];
+
+function decodeResultCallback(ZXing){
+  return function(result, err){
+    if(!scannerActive) return;
+    if(result){
+      var fmt = result.getBarcodeFormat ? result.getBarcodeFormat() : null;
+      if(fmt !== ZXing.BarcodeFormat.EAN_13){
+        console.log("[NutriStock] EAN-13以外を検知したため無視:", fmt, result.getText());
+        return; /* JANコード(EAN-13)以外は商品バーコードとして扱わない */
+      }
+      handleBarcodeDetected(result.getText());
+      return;
+    }
+    /* err fires continuously while no barcode is in frame — expected, ignore it */
+  };
 }
-function drawDetectionBox(resultPoints){
-  var canvas = document.getElementById("scannerCanvas");
-  var video = document.getElementById("scannerVideo");
-  if(!canvas || !video || !video.videoWidth || !resultPoints || !resultPoints.length) return;
-  var rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width;
-  canvas.height = rect.height;
-  var ctx = canvas.getContext("2d");
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  var vw = video.videoWidth, vh = video.videoHeight;
-  var cw = canvas.width, ch = canvas.height;
-  var scale = Math.max(cw/vw, ch/vh);
-  var dw = vw*scale, dh = vh*scale;
-  var offsetX = (dw-cw)/2, offsetY = (dh-ch)/2;
-
-  var pts = resultPoints.map(function(p){
-    return { x: p.getX()*scale - offsetX, y: p.getY()*scale - offsetY };
+async function startDecoding(ZXing){
+  scannerActive = true;
+  setScannerHint("カメラを起動しています…");
+  zxingReader.decodeFromVideoDevice(
+    preferredCameraId || undefined,
+    "scannerVideo",
+    decodeResultCallback(ZXing)
+  ).then(function(){
+    console.log("[NutriStock] カメラ起動成功、読み取り待機中…");
+    setScannerHint("バーコードを縦向き(90度回転)にして枠に合わせてください。正面のままだと読み取れないことが多いです");
+  }).catch(function(err){
+    var detail = err && (err.name || err.message) ? (err.name||"")+" "+(err.message||"") : "";
+    setScannerHint("カメラを起動できませんでした。権限が許可されているか確認してください。" + (detail ? "（"+detail+"）" : ""));
   });
-  var xs = pts.map(function(p){ return p.x; });
-  var ys = pts.map(function(p){ return p.y; });
-  var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
-  var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
-  var padX = 12, padY = 26; /* EAN detection gives a scan line, not a height — pad vertically to approximate the barcode's full box */
-
-  ctx.strokeStyle = "#4ADE80";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(minX-padX, minY-padY, (maxX-minX)+padX*2, (maxY-minY)+padY*2);
 }
 
 async function openScanner(onDetected){
   onBarcodeDetected = onDetected;
   var overlay = document.getElementById("scannerOverlay");
   overlay.hidden = false;
-  clearDetectionBox();
   lastSnapshotFile = null;
   lastSnapshotCode = null;
   document.getElementById("scannerShareBtn").style.display = "none";
@@ -501,49 +498,39 @@ async function openScanner(onDetected){
   try{
     var ZXing = await loadZXing();
     var hints = new Map();
-    /* tried broadening this to match a reference implementation's hint set, on the theory
-       that it changes ZXing's internal per-row read persistence — it didn't change the
-       straight-on failure, so narrowed back to just what this feature actually needs */
     hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
     hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
     zxingReader = new ZXing.BrowserMultiFormatReader(hints);
-    scannerActive = true;
-    var deviceId;
+
     try{
-      var devices = await zxingReader.listVideoInputDevices();
-      var back = devices && devices.find(function(d){ return /back|rear|environment/i.test(d.label); });
-      var chosen = back || (devices && devices[0]);
-      deviceId = chosen ? chosen.deviceId : undefined;
-    }catch(e){ deviceId = undefined; }
-    zxingReader.decodeFromVideoDevice(
-      deviceId,
-      "scannerVideo",
-      function(result, err){
-        if(!scannerActive) return;
-        if(result){
-          var fmt = result.getBarcodeFormat ? result.getBarcodeFormat() : null;
-          if(fmt !== ZXing.BarcodeFormat.EAN_13){
-            console.log("[NutriStock] EAN-13以外を検知したため無視:", fmt, result.getText());
-            return; /* JANコード(EAN-13)以外は商品バーコードとして扱わない */
-          }
-          drawDetectionBox(result.getResultPoints ? result.getResultPoints() : null);
-          handleBarcodeDetected(result.getText());
-          return;
+      availableCameras = await zxingReader.listVideoInputDevices();
+      document.getElementById("scannerFlipBtn").style.display = availableCameras.length > 1 ? "" : "none";
+      if(!preferredCameraId){
+        var back = availableCameras.find(function(d){ return /back|rear|environment/i.test(d.label); });
+        var chosen = back || availableCameras[0];
+        if(chosen){
+          preferredCameraId = chosen.deviceId;
+          try{ localStorage.setItem("nutristock_cameraId", preferredCameraId); }catch(e){}
         }
-        /* err fires continuously while no barcode is in frame — expected, ignore it */
       }
-    ).then(function(){
-      console.log("[NutriStock] カメラ起動成功、読み取り待機中…");
-      setScannerHint("バーコードを縦向き(90度回転)にして枠に合わせてください。正面のままだと読み取れないことが多いです");
-    }).catch(function(err){
-      var detail = err && (err.name || err.message) ? (err.name||"")+" "+(err.message||"") : "";
-      setScannerHint("カメラを起動できませんでした。権限が許可されているか確認してください。" + (detail ? "（"+detail+"）" : ""));
-    });
+    }catch(e){ availableCameras = []; }
+
+    await startDecoding(ZXing);
   }catch(e){
     var detail2 = e && (e.name || e.message) ? (e.name||"")+" "+(e.message||"") : "";
     setScannerHint("バーコード読み取り機能を読み込めませんでした。通信環境を確認してください。" + (detail2 ? "（"+detail2+"）" : ""));
   }
 }
+document.getElementById("scannerFlipBtn").addEventListener("click", async function(){
+  if(!availableCameras.length) return;
+  var idx = availableCameras.findIndex(function(d){ return d.deviceId === preferredCameraId; });
+  var next = availableCameras[(idx + 1) % availableCameras.length];
+  preferredCameraId = next.deviceId;
+  try{ localStorage.setItem("nutristock_cameraId", preferredCameraId); }catch(e){}
+  try{ if(zxingReader) zxingReader.reset(); }catch(e){}
+  var ZXing = await loadZXing();
+  startDecoding(ZXing);
+});
 var lastSnapshotFile = null;
 var lastSnapshotCode = null;
 var DEBUG_MODE = location.search.indexOf("debug=1") !== -1;
@@ -616,7 +603,6 @@ function handleBarcodeDetected(code){
 function closeScanner(){
   scannerActive = false;
   try{ if(zxingReader){ zxingReader.reset(); } }catch(e){}
-  clearDetectionBox();
   lastSnapshotFile = null;
   lastSnapshotCode = null;
   document.getElementById("scannerShareBtn").style.display = "none";
