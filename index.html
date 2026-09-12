@@ -991,6 +991,7 @@ function pushRecentFood(entry){
 
 /* ---------- render: PANTRY ---------- */
 var pantryUi = { category: "all", search: "", expiryDays: null };
+var lastPantrySubmitAt = 0;
 var EXPIRY_FILTER_OPTIONS = [
   {v:"", label:"すべて"},
   {v:"3", label:"3日以内"},
@@ -1062,7 +1063,10 @@ function renderPantry(){
     +     '<div class="field"><label>食材</label><select id="pf_food">'+ '<option value="">— 選択してください —</option>' + foodOptionsHtml() + '<option value="__custom">カスタム入力…</option></select></div>'
     +     '<div class="field"><label>&nbsp;</label><button type="button" id="pf_scanBtn" class="btn secondary">📷 バーコードでスキャン</button></div>'
     +   '</div>'
-    +   '<div class="field" id="pf_customWrap" style="display:none"><label>食材名（自由入力）</label><input id="pf_custom" type="text" placeholder="例：ちくわ"></div>'
+    +   '<div class="field-row" id="pf_customWrap" style="display:none">'
+    +     '<div class="field"><label>食材名（自由入力）</label><input id="pf_custom" type="text" placeholder="例：ちくわ"></div>'
+    +     '<div class="field"><label>カテゴリ</label><select id="pf_customCat">'+ Object.keys(CAT_LABEL).map(function(k){ return '<option value="'+k+'">'+CAT_LABEL[k]+'</option>'; }).join("") +'</select></div>'
+    +   '</div>'
     +   '<div id="pf_barcodeNote"></div>'
     +   '<div class="field-row">'
     +     '<div class="field"><label>数量</label><input id="pf_qty" type="number" min="0" step="0.1" placeholder="1" value="1"></div>'
@@ -1144,10 +1148,12 @@ function renderPantry(){
       var noteEl = document.getElementById("pf_barcodeNote");
       var prefillName = known ? known.name : (existing ? existing.name : "");
       var prefillUnit = known ? known.unit : (existing ? existing.unit : null);
+      var prefillCat = known ? known.category : (existing ? existing.category : null);
       document.getElementById("pf_food").value = "__custom";
       document.getElementById("pf_customWrap").style.display = "";
       document.getElementById("pf_custom").value = prefillName;
       if(prefillUnit) document.getElementById("pf_unit").value = prefillUnit;
+      if(prefillCat) document.getElementById("pf_customCat").value = prefillCat;
       if(!prefillName) document.getElementById("pf_custom").focus();
       pendingBarcode = code;
 
@@ -1181,6 +1187,8 @@ function renderPantry(){
 
   document.getElementById("pantryForm").addEventListener("submit", function(e){
     e.preventDefault();
+    var now = Date.now();
+    if(now - lastPantrySubmitAt < 800) return; /* guard against an accidental rapid double-tap adding the item twice */
     var foodKey = document.getElementById("pf_food").value;
     if(!foodKey){ return; }
     var custom = foodKey==="__custom";
@@ -1190,10 +1198,11 @@ function renderPantry(){
     var unit = document.getElementById("pf_unit").value;
     var expiry = document.getElementById("pf_expiry").value;
     if(!expiry) return;
-    var cat = custom ? "other" : FOOD_BY_KEY[foodKey].cat;
+    var cat = custom ? document.getElementById("pf_customCat").value : FOOD_BY_KEY[foodKey].cat;
+    lastPantrySubmitAt = now;
     var barcodeChanged = false;
     if(pendingBarcode){
-      state.barcodes[pendingBarcode] = { name: name, unit: unit };
+      state.barcodes[pendingBarcode] = { name: name, unit: unit, category: cat };
       barcodeChanged = true;
     }
     state.pantry.push({ id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, addedAt: Date.now() });
