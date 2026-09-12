@@ -979,20 +979,36 @@ function renderPantry(){
   document.getElementById("pf_scanBtn").addEventListener("click", function(){
     openScanner(function(code){
       var known = state.barcodes[code];
-      console.log("[NutriStock] パントリーで受信:", code, known ? "（登録済み: "+known.name+"）" : "（新規）");
+      var existing = state.pantry.find(function(p){ return p.barcode === code; });
+      console.log("[NutriStock] パントリーで受信:", code, known ? "（登録済み: "+known.name+"）" : "（新規）", existing ? "在庫あり" : "在庫なし");
       var noteEl = document.getElementById("pf_barcodeNote");
+      var prefillName = known ? known.name : (existing ? existing.name : "");
+      var prefillUnit = known ? known.unit : (existing ? existing.unit : null);
       document.getElementById("pf_food").value = "__custom";
       document.getElementById("pf_customWrap").style.display = "";
-      if(known){
-        document.getElementById("pf_custom").value = known.name;
-        if(known.unit) document.getElementById("pf_unit").value = known.unit;
+      document.getElementById("pf_custom").value = prefillName;
+      if(prefillUnit) document.getElementById("pf_unit").value = prefillUnit;
+      if(!prefillName) document.getElementById("pf_custom").focus();
+      pendingBarcode = code;
+
+      if(existing){
+        var d = daysUntil(existing.expiry);
+        var expiryText = d<=0 ? "本日まで" : "あと"+d+"日";
+        noteEl.innerHTML =
+          '<div class="barcode-note">この商品はすでに在庫があります：現在 '+existing.qty+existing.unit+'（賞味期限 '+existing.expiry+' ・ '+expiryText+'）'
+          + '<div style="margin-top:6px"><button type="button" id="pf_incBtn" class="btn small">+1'+existing.unit+' 追加する</button></div>'
+          + '<div class="hint" style="margin-top:4px">賞味期限が違うものを別に管理したい場合は、下のフォームからそのまま新規追加できます</div></div>';
+        document.getElementById("pf_incBtn").addEventListener("click", function(){
+          existing.qty = round1(existing.qty + 1);
+          persist(["pantry"]);
+          pendingBarcode = null;
+          renderAll();
+        });
+      } else if(known){
         noteEl.innerHTML = '<div class="barcode-note">前回の登録内容を自動入力しました（JAN: '+escapeAttr(code)+'）</div>';
       } else {
-        document.getElementById("pf_custom").value = "";
-        document.getElementById("pf_custom").focus();
         noteEl.innerHTML = '<div class="barcode-note">初めてのバーコードです（JAN: '+escapeAttr(code)+'）。食材名を入力すると次回から自動入力されます</div>';
       }
-      pendingBarcode = code;
     });
   });
 
