@@ -955,7 +955,13 @@ function pushRecentFood(entry){
 }
 
 /* ---------- render: PANTRY ---------- */
-var pantryUi = { category: "all", search: "" };
+var pantryUi = { category: "all", search: "", expiryDays: null };
+var EXPIRY_FILTER_OPTIONS = [
+  {v:"", label:"すべて"},
+  {v:"3", label:"3日以内"},
+  {v:"7", label:"7日以内"},
+  {v:"14", label:"2週間以内"}
+];
 function foodOptionsHtml(selected){
   return FOOD_DB.map(function(f){ return '<option value="'+f.key+'"'+(f.key===selected?" selected":"")+'>'+f.name+'</option>'; }).join("");
 }
@@ -973,6 +979,9 @@ function renderPantry(){
   }).sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
   var expiredList = filtered.filter(function(p){ return daysUntil(p.expiry) < 0; });
   var activeList = filtered.filter(function(p){ return daysUntil(p.expiry) >= 0; });
+  if(pantryUi.expiryDays!==null){
+    activeList = activeList.filter(function(p){ return daysUntil(p.expiry) <= pantryUi.expiryDays; });
+  }
 
   var expiredHtml = expiredList.length
     ? '<div class="card" style="border-color:var(--crit)"><div class="card-head"><h2 style="color:var(--crit)">⚠️ 期限切れ（'+expiredList.length+'件）</h2></div><div class="sub">早めに使うか、処分してください</div><div class="list">'+expiredList.map(function(p){ return rowItemHtml(p, true); }).join("")+'</div></div>'
@@ -985,6 +994,9 @@ function renderPantry(){
     '<div class="pill-tabs" id="pantryCatFilter">'
     + '<button data-cat="all" class="'+(pantryUi.category==="all"?"active":"")+'">すべて</button>'
     + catKeys.map(function(k){ return '<button data-cat="'+k+'" class="'+(pantryUi.category===k?"active":"")+'">'+CAT_LABEL[k]+'</button>'; }).join("")
+    + '</div>'
+    + '<div class="pill-tabs" id="pantryExpiryFilter">'
+    + EXPIRY_FILTER_OPTIONS.map(function(o){ return '<button data-days="'+o.v+'" class="'+((pantryUi.expiryDays===null?"":String(pantryUi.expiryDays))===o.v?"active":"")+'">'+o.label+'</button>'; }).join("")
     + '</div>'
     + '<input type="text" id="pantrySearch" placeholder="食材名で検索" value="'+escapeAttr(pantryUi.search)+'" style="width:100%;padding:9px 10px;border-radius:9px;border:1px solid var(--border);background:var(--surface);font-size:13.5px;margin-bottom:14px">'
   ) : '';
@@ -1039,6 +1051,11 @@ function renderPantry(){
     document.getElementById("pantryCatFilter").addEventListener("click", function(e){
       var b = e.target.closest("button[data-cat]"); if(!b) return;
       pantryUi.category = b.dataset.cat; renderPantry();
+    });
+    document.getElementById("pantryExpiryFilter").addEventListener("click", function(e){
+      var b = e.target.closest("button[data-days]"); if(!b) return;
+      pantryUi.expiryDays = b.dataset.days === "" ? null : parseInt(b.dataset.days, 10);
+      renderPantry();
     });
     document.getElementById("pantrySearch").addEventListener("input", function(){
       pantryUi.search = this.value; renderPantry();
