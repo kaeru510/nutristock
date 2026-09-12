@@ -994,12 +994,19 @@ function renderPantry(){
       if(existing){
         var d = daysUntil(existing.expiry);
         var expiryText = d<=0 ? "本日まで" : "あと"+d+"日";
+        var qtyStep = (existing.unit==="g" || existing.unit==="ml") ? "0.1" : "1";
         noteEl.innerHTML =
           '<div class="barcode-note">この商品はすでに在庫があります：現在 '+existing.qty+existing.unit+'（賞味期限 '+existing.expiry+' ・ '+expiryText+'）'
-          + '<div style="margin-top:6px"><button type="button" id="pf_incBtn" class="btn small">+1'+existing.unit+' 追加する</button></div>'
+          + '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">'
+          +   '<input type="number" id="pf_incQty" min="0" step="'+qtyStep+'" value="1" style="width:70px;padding:7px 9px;border-radius:8px;border:1px solid var(--border)">'
+          +   '<span style="font-size:12.5px;color:var(--ink-2)">'+existing.unit+' 追加</span>'
+          +   '<button type="button" id="pf_incBtn" class="btn small">反映する</button>'
+          + '</div>'
           + '<div class="hint" style="margin-top:4px">賞味期限が違うものを別に管理したい場合は、下のフォームからそのまま新規追加できます</div></div>';
         document.getElementById("pf_incBtn").addEventListener("click", function(){
-          existing.qty = round1(existing.qty + 1);
+          var add = parseFloat(document.getElementById("pf_incQty").value) || 0;
+          if(add <= 0) return;
+          existing.qty = round1(existing.qty + add);
           persist(["pantry"]);
           pendingBarcode = null;
           renderAll();
