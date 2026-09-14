@@ -27,20 +27,21 @@
 | 買い物リスト・期限切れ分離・カテゴリ検索・最近使った食材 | ✅ 動作 | 2026-09-12追加 |
 | バーコード→商品名の自動学習 | ✅ 動作 | 商品DBには接続不可なので、一度手入力すれば次回から自動入力される方式 |
 | 保存時のトースト通知 | ✅ 動作 | 「✓ 保存しました」を画面下に表示 |
-| AI写真解析（食事記録） | ✅ 動作（要APIキー） | 2026-09-14〜。ユーザー自身のClaude APIキーを設定タブに登録すると使える。詳細は下記「AI写真解析（Claude API直叩き）」 |
+| AI写真解析（食事記録） | ✅ 動作（要APIキー） | 2026-09-14〜。ユーザー自身のGemini APIキーを設定タブに登録すると使える。詳細は下記「AI写真解析（Gemini API直叩き）」 |
 | Apple ヘルスケア連携 | ❌ 不可能 | 原理的にWeb版からは到達不可 |
 
-## AI写真解析（Claude API直叩き）2026-09-14実装
+## AI写真解析（Gemini API直叩き）2026-09-14実装
 
-GitHub Pages版には`window.claude`が存在せず`claude.use("sample")`が使えないため（旧Artifact版の`sample` capabilityはアカウント側制限で結局使えないままだった）、**ユーザー自身のClaude APIキーをブラウザから直接Anthropic APIに送る「Bring Your Own Key」方式**に置き換えた。
+GitHub Pages版には`window.claude`が存在せず`claude.use("sample")`が使えないため（旧Artifact版の`sample` capabilityはアカウント側制限で結局使えないままだった）、**ユーザー自身のGemini APIキーをブラウザから直接Google側APIに送る「Bring Your Own Key」方式**で実装。当初Claude APIで実装したが、Gemini APIには無料枠があり実質無料で使える見込みが高いことから、ユーザーの希望でGeminiに切り替えた（Claude版の実装は2026-09-14中に置き換え・廃止）。
 
-- 設定タブに「AI設定（Claude APIキー）」カードを追加。入力したキーは `localStorage`（`nutristock_claudeApiKey`）にのみ保存。`state`オブジェクトやdb同期の対象には含めない（他人と共有される経路が一切ないようにするため）
-- ブラウザから直接 `https://api.anthropic.com/v1/messages` を叩く。通常はCORSでブロックされるが、`anthropic-dangerous-direct-browser-access: true` ヘッダーを付けることで許可される（Anthropic公式ドキュメント・TypeScript SDKの`dangerouslyAllowBrowser`オプション相当を素のfetchで再現したもの）
-- モデルは `claude-haiku-4-5`（速度・コスト優先）。画像はCanvasで長辺1024pxに縮小してから`toDataURL("image/jpeg",0.82)`でbase64化して送信（通信量・料金を抑えるため）
+- 設定タブに「AI設定（Gemini APIキー）」カードを追加。入力したキーは `localStorage`（`nutristock_geminiApiKey`）にのみ保存。`state`オブジェクトやdb同期の対象には含めない（他人と共有される経路が一切ないようにするため）
+- ブラウザから直接 `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` を叩く。実機で確認したところ`Access-Control-Allow-Origin`がリクエスト元オリジンをそのまま返しており、特別なヘッダー無しでブラウザから直接fetchできる（Claude APIの`anthropic-dangerous-direct-browser-access`ヘッダーのような opt-in は不要）
+- 新しい「Interactions API」(`/v1beta/interactions`)も検討したが、実機で叩いたところエラー応答が配列でラップされて返るなど公式ドキュメントの記載と食い違う挙動があったため、枯れていて挙動が安定している従来の`generateContent`エンドポイントを採用（`candidates[0].content.parts[].text`で応答テキストを取得、リクエストの画像は`contents[].parts[].inlineData:{mimeType,data}`）
+- モデルは `gemini-3.8-flash`（無料枠あり・低コスト優先）。画像はCanvasで長辺1024pxに縮小してから`toDataURL("image/jpeg",0.82)`でbase64化して送信（通信量・料金を抑えるため）
 - プロンプトで「JSON配列のみで回答」と指示し、応答テキストからコードブロック記法(```)を除去してから`JSON.parse`。構造化出力の保証はないため、パース失敗時は`invalid_json`エラーとして扱う
-- **重要**: claude.aiのPro/Max等のサブスクリプションとAPI利用は別物。Anthropic Console（console.anthropic.com）で別途APIキー発行・請求先登録が必要（設定カードの説明文にもその旨を明記）
+- エラー判定は実機で確認した実際のエラー形状に基づく：無効なAPIキーは`HTTP 400`＋`error.details[0].reason === "API_KEY_INVALID"`で返る（`401`ではない）。レート制限は`error.status === "RESOURCE_EXHAUSTED"`
+- **重要**: Gemini Advanced等のチャット向けサブスクリプションとAPI利用は別物。Google AI Studio（aistudio.google.com/apikey）で別途APIキー発行が必要（無料枠あり、超過分のみ課金。設定カードの説明文にもその旨を明記）
 - セキュリティ: `kaeru510/nutristock`はPublicリポジトリなので、APIキーは**絶対にコード・gitにコミットしない**。ユーザー本人が使う端末のブラウザに閉じたローカル保存のみ。共有端末では開発者ツールからキーを読み取れる点は設定画面に注意書き済み
-- Gemini APIについても検討したが、ブラウザ直叩き(CORS)に関する公式な明記が見つからなかったため、確実に動作が確認できたClaude側のみ先に実装。Gemini対応は将来の追加検討事項
 
 ## プラットフォーム側の制約（コードでは解決不可）
 
