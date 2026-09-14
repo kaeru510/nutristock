@@ -27,22 +27,27 @@
 | 買い物リスト・期限切れ分離・カテゴリ検索・最近使った食材 | ✅ 動作 | 2026-09-12追加 |
 | バーコード→商品名の自動学習 | ✅ 動作 | 商品DBには接続不可なので、一度手入力すれば次回から自動入力される方式 |
 | 保存時のトースト通知 | ✅ 動作 | 「✓ 保存しました」を画面下に表示 |
-| AI写真解析（食事記録） | ❌ 現状不可 | Artifact版では実装済みだったがアカウント側の制限で保留（回答待ち）。本番のGitHub Pages版では`window.claude`が無いため原理的にも不可 |
+| AI写真解析（食事記録） | ✅ 動作（要APIキー） | 2026-09-14〜。ユーザー自身のClaude APIキーを設定タブに登録すると使える。詳細は下記「AI写真解析（Claude API直叩き）」 |
 | Apple ヘルスケア連携 | ❌ 不可能 | 原理的にWeb版からは到達不可 |
+
+## AI写真解析（Claude API直叩き）2026-09-14実装
+
+GitHub Pages版には`window.claude`が存在せず`claude.use("sample")`が使えないため（旧Artifact版の`sample` capabilityはアカウント側制限で結局使えないままだった）、**ユーザー自身のClaude APIキーをブラウザから直接Anthropic APIに送る「Bring Your Own Key」方式**に置き換えた。
+
+- 設定タブに「AI設定（Claude APIキー）」カードを追加。入力したキーは `localStorage`（`nutristock_claudeApiKey`）にのみ保存。`state`オブジェクトやdb同期の対象には含めない（他人と共有される経路が一切ないようにするため）
+- ブラウザから直接 `https://api.anthropic.com/v1/messages` を叩く。通常はCORSでブロックされるが、`anthropic-dangerous-direct-browser-access: true` ヘッダーを付けることで許可される（Anthropic公式ドキュメント・TypeScript SDKの`dangerouslyAllowBrowser`オプション相当を素のfetchで再現したもの）
+- モデルは `claude-haiku-4-5`（速度・コスト優先）。画像はCanvasで長辺1024pxに縮小してから`toDataURL("image/jpeg",0.82)`でbase64化して送信（通信量・料金を抑えるため）
+- プロンプトで「JSON配列のみで回答」と指示し、応答テキストからコードブロック記法(```)を除去してから`JSON.parse`。構造化出力の保証はないため、パース失敗時は`invalid_json`エラーとして扱う
+- **重要**: claude.aiのPro/Max等のサブスクリプションとAPI利用は別物。Anthropic Console（console.anthropic.com）で別途APIキー発行・請求先登録が必要（設定カードの説明文にもその旨を明記）
+- セキュリティ: `kaeru510/nutristock`はPublicリポジトリなので、APIキーは**絶対にコード・gitにコミットしない**。ユーザー本人が使う端末のブラウザに閉じたローカル保存のみ。共有端末では開発者ツールからキーを読み取れる点は設定画面に注意書き済み
+- Gemini APIについても検討したが、ブラウザ直叩き(CORS)に関する公式な明記が見つからなかったため、確実に動作が確認できたClaude側のみ先に実装。Gemini対応は将来の追加検討事項
 
 ## プラットフォーム側の制約（コードでは解決不可）
 
 ### 1. Apple ヘルスケア連携
 HealthKitはネイティブiOSアプリ専用APIで、Webページから使う公式手段が存在しない。歩数の自動取得は不可能（ネイティブアプリ化以外に道がない）。
 
-### 2. AI写真解析（sample capability）が使えない
-`claude.use("sample")` が常にnullを返す。VS Code拡張・デスクトップブラウザ・モバイルブラウザすべてで再現。
-- claude.ai設定 > 機能 > 「AI搭載のアーティファクト」はON済み（原因ではなかった）
-- 2026-09-11にAnthropicへフィードバック送信済み、回答待ち
-- アカウント/組織側の機能有効化状況に起因すると思われる（原因確定はできず）
-- 直った場合、コード変更なしにそのまま動くはず
-
-### 3. スマホでバーコードのカメラが起動しない
+### 2. スマホでバーコードのカメラが起動しない
 エラー: `NotAllowedError` / `Permissions policy violation: camera is not allowed in this document`
 - Artifactはclaude.aiのページ内にiframeとして埋め込まれる仕組み
 - iframe内でカメラ(getUserMedia)を使うには、親ページ側が `allow="camera"` を明示的に渡す必要がある
