@@ -40,6 +40,7 @@ GitHub Pages版には`window.claude`が存在せず`claude.use("sample")`が使�
 - モデルは `gemini-3.8-flash`（無料枠あり・低コスト優先）。画像はCanvasで長辺1024pxに縮小してから`toDataURL("image/jpeg",0.82)`でbase64化して送信（通信量・料金を抑えるため）
 - プロンプトで「JSON配列のみで回答」と指示し、応答テキストからコードブロック記法(```)を除去してから`JSON.parse`。構造化出力の保証はないため、パース失敗時は`invalid_json`エラーとして扱う
 - エラー判定は実機で確認した実際のエラー形状に基づく：無効なAPIキーは`HTTP 400`＋`error.details[0].reason === "API_KEY_INVALID"`で返る（`401`ではない）。レート制限は`error.status === "RESOURCE_EXHAUSTED"`
+- `503`（サーバー過負荷）がGemini無料枠では頻繁に発生することを実運用で確認。1.5秒待って1回だけ自動リトライし、それでも失敗したら「Gemini側の一時的な混雑です」という専用メッセージを表示（通信環境の問題という誤解を避けるため、他のエラーとメッセージを分けた）
 - **重要**: Gemini Advanced等のチャット向けサブスクリプションとAPI利用は別物。Google AI Studio（aistudio.google.com/apikey）で別途APIキー発行が必要（無料枠あり、超過分のみ課金。設定カードの説明文にもその旨を明記）
 - セキュリティ: `kaeru510/nutristock`はPublicリポジトリなので、APIキーは**絶対にコード・gitにコミットしない**。ユーザー本人が使う端末のブラウザに閉じたローカル保存のみ。共有端末では開発者ツールからキーを読み取れる点は設定画面に注意書き済み
 

@@ -391,6 +391,7 @@ var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 var PHOTO_ERROR_MESSAGES = {
   invalid_key:"Gemini APIキーが正しくないか、権限がありません。設定タブでキーをご確認ください。",
   rate_limited:"リクエストが混み合っています（無料枠の上限に達した可能性があります）。しばらくしてからもう一度お試しください。",
+  server_overloaded:"Gemini側が一時的に混み合っています（サーバー過負荷）。こちら側の不具合ではないので、少し時間をおいてもう一度お試しください。",
   invalid_json:"AIの応答を解析できませんでした。もう一度お試しください。",
   network_error:"通信に失敗しました。通信環境を確認してもう一度お試しください。",
   read_failed:"画像を読み込めませんでした。別の写真でお試しください。"
@@ -668,28 +669,35 @@ async function runPhotoAnalysis(file){
       photoUi.status = "error"; photoUi.error = PHOTO_ERROR_MESSAGES.read_failed; renderMeals(); return;
     }
     try{
-      var res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-goog-api-key": geminiApiKey
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inlineData: { mimeType: imgSource.mimeType, data: imgSource.data } }
-            ]
-          }],
-          generationConfig: { maxOutputTokens: 1024 }
-        })
+      var geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
+      var requestBody = JSON.stringify({
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType: imgSource.mimeType, data: imgSource.data } }
+          ]
+        }],
+        generationConfig: { maxOutputTokens: 1024 }
       });
+      var res;
+      /* Gemini's free/flash tier returns 503 fairly often under load; one short retry
+         clears most of these without bothering the viewer with a transient error */
+      for(var attempt=0; attempt<2; attempt++){
+        res = await fetch(geminiUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
+          body: requestBody
+        });
+        if(res.ok || (res.status!==503 && res.status!==500)) break;
+        if(attempt===0) await new Promise(function(r){ setTimeout(r, 1500); });
+      }
       if(!res.ok){
         var errBody = await res.json().catch(function(){ return null; });
         var errStatus = errBody && errBody.error && errBody.error.status;
         var errReason = errBody && errBody.error && errBody.error.details && errBody.error.details[0] && errBody.error.details[0].reason;
         var code = (errReason==="API_KEY_INVALID" || res.status===401 || res.status===403 || errStatus==="PERMISSION_DENIED") ? "invalid_key"
           : (res.status===429 || errStatus==="RESOURCE_EXHAUSTED") ? "rate_limited"
+          : (res.status===503 || res.status===500 || errStatus==="UNAVAILABLE") ? "server_overloaded"
           : "network_error";
         photoUi.status = "error"; photoUi.error = PHOTO_ERROR_MESSAGES[code]; renderMeals(); return;
       }
