@@ -382,11 +382,39 @@ async function initDb(){
 }
 
 /* ---------- AI photo analysis (Gemini API, user's own key, called directly from the browser) ---------- */
-var GEMINI_MODEL = "gemini-3.5-flash-lite";
+var GEMINI_MODEL_OPTIONS = [
+  {v:"gemini-3.5-flash-lite", label:"Flash-Lite 3.5（軽量・低コスト。おすすめ・デフォルト）"},
+  {v:"gemini-3.1-flash-lite", label:"Flash-Lite 3.1（旧世代の軽量版。混雑時の代替候補）"},
+  {v:"gemini-3.5-flash", label:"Flash 3.5（標準。Liteより高精度な場合あり）"},
+  {v:"gemini-3.8-flash", label:"Flash 3.8（最新・高精度だが503が出やすい傾向あり）"}
+];
+var GEMINI_MODEL_DEFAULT = "gemini-3.5-flash-lite";
+var geminiModel = GEMINI_MODEL_DEFAULT;
+try{ geminiModel = localStorage.getItem("nutristock_geminiModel") || GEMINI_MODEL_DEFAULT; }catch(e){}
 var geminiApiKey = "";
 try{ geminiApiKey = localStorage.getItem("nutristock_geminiApiKey") || ""; }catch(e){}
 function hasGeminiKey(){ return !!geminiApiKey; }
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
+
+/* ---------- local usage log (NOT Google's official quota — just what this app itself has sent) ---------- */
+var GEMINI_USAGE_LOG_MAX = 200;
+function loadGeminiUsageLog(){
+  try{ var raw = localStorage.getItem("nutristock_geminiUsageLog"); return raw ? JSON.parse(raw) : []; }catch(e){ return []; }
+}
+function logGeminiUsage(entry){
+  var log = loadGeminiUsageLog();
+  log.push(entry);
+  if(log.length > GEMINI_USAGE_LOG_MAX) log = log.slice(log.length - GEMINI_USAGE_LOG_MAX);
+  try{ localStorage.setItem("nutristock_geminiUsageLog", JSON.stringify(log)); }catch(e){}
+}
+function todaysGeminiUsage(){
+  var log = loadGeminiUsageLog();
+  var todayPrefix = todayStr();
+  var todays = log.filter(function(e){ return new Date(e.ts).getFullYear()+"-"+String(new Date(e.ts).getMonth()+1).padStart(2,"0")+"-"+String(new Date(e.ts).getDate()).padStart(2,"0") === todayPrefix; });
+  var ok = todays.filter(function(e){ return e.ok; }).length;
+  var err = todays.filter(function(e){ return !e.ok; }).length;
+  return { total: todays.length, ok: ok, err: err, log: log.slice(-10).reverse() };
+}
 
 var PHOTO_ERROR_MESSAGES = {
   invalid_key:"Gemini APIキーが正しくないか、権限がありません。設定タブでキーをご確認ください。",
@@ -669,7 +697,7 @@ async function runPhotoAnalysis(file){
       photoUi.status = "error"; photoUi.error = PHOTO_ERROR_MESSAGES.read_failed; renderMeals(); return;
     }
     try{
-      var geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
+      var geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + geminiModel + ":generateContent";
       var requestBody = JSON.stringify({
         contents: [{
           parts: [
@@ -712,6 +740,7 @@ async function runPhotoAnalysis(file){
           : (res.status===429 || errStatus==="RESOURCE_EXHAUSTED") ? "rate_limited"
           : (res.status===503 || res.status===500 || errStatus==="UNAVAILABLE") ? "server_overloaded"
           : "network_error";
+        logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: false, code: code, status: res ? res.status : null });
         photoUi.status = "error"; photoUi.error = PHOTO_ERROR_MESSAGES[code]; renderMeals(); return;
       }
       var data = await res.json();
@@ -723,9 +752,12 @@ async function runPhotoAnalysis(file){
       photoUi.items = geminiPhotoItemsFromResponseText(text, validPantryIds);
       photoUi.status = photoUi.items.length ? "done" : "error";
       if(!photoUi.items.length) photoUi.error = "食品を認識できませんでした。もう一度お試しください。";
+      var usage = data.usageMetadata || {};
+      logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: true, promptTokens: usage.promptTokenCount||0, outputTokens: usage.candidatesTokenCount||0 });
     }catch(e){
       photoUi.status = "error";
       photoUi.error = (e instanceof SyntaxError) ? PHOTO_ERROR_MESSAGES.invalid_json : PHOTO_ERROR_MESSAGES.network_error;
+      logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: false, code: "exception" });
     }
     renderMeals();
   });
@@ -1601,9 +1633,28 @@ function renderSettings(){
     +   '（Gemini Advanced等のサブスクリプションとは別枠です。無料枠がありますが、超過分はご自身のGoogleアカウントに請求されます）。</div>'
     + '<form id="apiKeyForm" class="inline">'
     +   '<div class="field"><label>Gemini APIキー</label><input id="ak_key" type="password" placeholder="AIza..." value="'+escapeAttr(geminiApiKey)+'" autocomplete="off"></div>'
+    +   '<div class="field"><label>使用モデル</label><select id="ak_model">'
+    +     GEMINI_MODEL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(geminiModel===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
+    +   '</select><div class="hint">503エラーが頻発する場合は、別のモデルに切り替えると改善することがあります（無料枠のレート制限がモデルごとに別枠のため）</div></div>'
     +   '<div class="hint">共有・他人と使う端末では開発者ツール等から読み取れてしまう点にご注意ください。</div>'
     +   '<div class="form-actions"><button type="button" id="ak_clear" class="btn ghost small">削除</button><button type="submit" class="btn small">保存</button></div>'
     + '</form>'
+    + '</div>'
+    + '<div class="card">'
+    + '<div class="card-head"><h2>Gemini利用状況（このアプリ内の記録）</h2></div>'
+    + '<div class="sub">Google公式の正確な残り使用量ではなく、NutriStockがこの端末から送ったリクエストの記録です。正式な数値は <a href="https://aistudio.google.com/rate-limit?timeRange=last-28-days" target="_blank" rel="noopener">Google AI Studioの利用状況ページ</a> でご確認ください。</div>'
+    + (function(){
+        var usage = todaysGeminiUsage();
+        if(usage.total===0) return '<div class="hint" style="margin-top:8px">本日はまだ記録がありません。</div>';
+        var rows = usage.log.map(function(e){
+          var time = new Date(e.ts).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"});
+          var statusText = e.ok ? "成功" : "失敗（"+escapeAttr(e.code||"不明")+"）";
+          return '<div class="row-item"><div class="main"><div class="name">'+time+' ・ '+escapeAttr(e.model)+'</div><div class="meta">'+statusText+'</div></div></div>';
+        }).join("");
+        return '<div class="totals-bar" style="margin-top:2px"><span>本日の呼び出し ： <b>'+usage.total+'</b>回</span><span>成功 <b>'+usage.ok+'</b></span><span>失敗 <b>'+usage.err+'</b></span></div>'
+          + '<div class="list">'+rows+'</div>'
+          + '<div class="hint" style="margin-top:8px">直近10件を表示（最大200件まで記録）</div>';
+      })()
     + '</div>'
     + '<div class="card">'
     + '<div class="card-head"><h2>プロフィール</h2></div><div class="sub">身長・体重・年齢から基準の栄養目標を計算します</div>'
@@ -1645,7 +1696,9 @@ function renderSettings(){
     e.preventDefault();
     geminiApiKey = (document.getElementById("ak_key").value||"").trim();
     try{ localStorage.setItem("nutristock_geminiApiKey", geminiApiKey); }catch(e){}
-    showToast(geminiApiKey ? "APIキーを保存しました" : "APIキーを削除しました");
+    geminiModel = document.getElementById("ak_model").value || GEMINI_MODEL_DEFAULT;
+    try{ localStorage.setItem("nutristock_geminiModel", geminiModel); }catch(e){}
+    showToast(geminiApiKey ? "APIキー・設定を保存しました" : "APIキーを削除しました");
     renderMeals();
   });
   document.getElementById("ak_clear").addEventListener("click", function(){
