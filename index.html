@@ -382,7 +382,7 @@ async function initDb(){
 }
 
 /* ---------- AI photo analysis (Gemini API, user's own key, called directly from the browser) ---------- */
-var GEMINI_MODEL = "gemini-3.8-flash";
+var GEMINI_MODEL = "gemini-3.5-flash-lite";
 var geminiApiKey = "";
 try{ geminiApiKey = localStorage.getItem("nutristock_geminiApiKey") || ""; }catch(e){}
 function hasGeminiKey(){ return !!geminiApiKey; }

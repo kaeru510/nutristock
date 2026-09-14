@@ -37,7 +37,7 @@ GitHub Pages版には`window.claude`が存在せず`claude.use("sample")`が使�
 - 設定タブに「AI設定（Gemini APIキー）」カードを追加。入力したキーは `localStorage`（`nutristock_geminiApiKey`）にのみ保存。`state`オブジェクトやdb同期の対象には含めない（他人と共有される経路が一切ないようにするため）
 - ブラウザから直接 `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` を叩く。実機で確認したところ`Access-Control-Allow-Origin`がリクエスト元オリジンをそのまま返しており、特別なヘッダー無しでブラウザから直接fetchできる（Claude APIの`anthropic-dangerous-direct-browser-access`ヘッダーのような opt-in は不要）
 - 新しい「Interactions API」(`/v1beta/interactions`)も検討したが、実機で叩いたところエラー応答が配列でラップされて返るなど公式ドキュメントの記載と食い違う挙動があったため、枯れていて挙動が安定している従来の`generateContent`エンドポイントを採用（`candidates[0].content.parts[].text`で応答テキストを取得、リクエストの画像は`contents[].parts[].inlineData:{mimeType,data}`）
-- モデルは `gemini-3.8-flash`（無料枠あり・低コスト優先）。画像はCanvasで長辺1024pxに縮小してから`toDataURL("image/jpeg",0.82)`でbase64化して送信（通信量・料金を抑えるため）
+- モデルは `gemini-3.5-flash-lite`（2026-09-14、`gemini-3.8-flash`で503過負荷が頻発したため軽量モデルに変更・画像入力対応は公式ドキュメントで確認済み）。画像はCanvasで長辺1024pxに縮小してから`toDataURL("image/jpeg",0.82)`でbase64化して送信（通信量・料金を抑えるため）
 - プロンプトで「JSON配列のみで回答」と指示し、応答テキストからコードブロック記法(```)を除去してから`JSON.parse`。構造化出力の保証はないため、パース失敗時は`invalid_json`エラーとして扱う
 - エラー判定は実機で確認した実際のエラー形状に基づく：無効なAPIキーは`HTTP 400`＋`error.details[0].reason === "API_KEY_INVALID"`で返る（`401`ではない）。レート制限は`error.status === "RESOURCE_EXHAUSTED"`
 - `503`（サーバー過負荷）がGemini無料枠では頻繁に発生することを実運用で確認。1.5秒待って1回だけ自動リトライし、それでも失敗したら「Gemini側の一時的な混雑です」という専用メッセージを表示（通信環境の問題という誤解を避けるため、他のエラーとメッセージを分けた）
