@@ -104,6 +104,13 @@
   .row-item .meta{color:var(--ink-3);font-size:12px;margin-top:2px}
   .row-item .tag{font-size:11px;color:var(--ink-2);background:var(--surface-2);padding:2px 8px;border-radius:999px;white-space:nowrap}
   .row-item .days{font-size:12px;font-weight:700;white-space:nowrap}
+  .meal-detail summary{cursor:pointer;list-style:none;font-weight:700;font-size:14px;display:inline}
+  .meal-detail summary::-webkit-details-marker{display:none}
+  .meal-detail summary::before{content:"▸ ";color:var(--ink-3);font-size:11px}
+  .meal-detail[open] summary::before{content:"▾ "}
+  .ingredient-detail-list{margin-top:6px;padding-left:14px;font-size:12px;color:var(--ink-2);display:flex;flex-direction:column;gap:2px}
+  .badge.neutral{background:var(--surface-3);color:var(--ink-2)}
+  .badge.neutral::before{background:var(--ink-3)}
 
   .suggest-card{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--accent-soft)}
   .suggest-card .ic{font-size:20px;line-height:1}
@@ -1019,6 +1026,25 @@ function buildDishTitle(chosen){
   return chosen.map(function(c){ return c.p.name; }).join("＋")+"の調理";
 }
 
+/* like renderHome()'s daily meters, but scoped to one meal (this meal's amount as a share of
+   the full daily target) — no good/warn/crit judgement, since a single meal being far below
+   the daily target is normal and not something to flag */
+function mealTypeMeters(totals){
+  var targets = state.targets;
+  var meterKeys = ["kcal","protein","fat","carb","fiber","salt","veg"];
+  return meterKeys.map(function(k){
+    var consumed = totals[k];
+    var target = targets ? targets[k] : 0;
+    var pct = target ? Math.min(100, Math.round(consumed/target*100)) : 0;
+    return '<div class="meter">'
+      + '<div class="mh"><span class="name">'+NUTRIENT_LABEL[k]+'</span>'
+      + '<span class="nums">'+round1(consumed)+' / '+(target||"–")+' '+NUTRIENT_UNIT[k]+'</span></div>'
+      + '<div class="track"><div class="fill" style="width:'+pct+'%"></div></div>'
+      + (target ? '<span class="badge neutral">1日の目標の'+pct+'%</span>' : '')
+      + '</div>';
+  }).join("");
+}
+
 function renderHome(){
   var el = document.getElementById("panel-home");
   var targets = state.targets;
@@ -1105,7 +1131,7 @@ function renderHome(){
         var f = FOOD_BY_KEY[item.foodKey];
         if(!f) return;
         var nutrients = nutrientsForFood(f, item.qty);
-        state.meals.push({ id: uid(), date: todayStr(), type: "dinner", name: f.name, qty: item.qty, nutrients: nutrients, createdAt: Date.now() });
+        state.meals.push({ id: uid(), date: todayStr(), type: "dinner", name: f.name, qty: item.qty, nutrients: nutrients, createdAt: Date.now(), cookMode: "home", ingredients: [] });
         var stock = state.pantry.find(function(p){ return p.id === item.pantryId; });
         if(stock){
           deductPantryForConsumption(stock, item.qty);
@@ -1456,14 +1482,25 @@ function renderMeals(){
   var dayEntries = state.meals.filter(function(m){ return m.date===mealsUi.date; });
   var typeEntries = dayEntries.filter(function(m){ return m.type===mealsUi.type; });
   var dayTotals = sumNutrients(dayEntries);
+  var typeTotals = sumNutrients(typeEntries);
 
+  var COOK_MODE_TAG = { home:"🍳 自炊", out:"🍱 外食・出来合い" };
   var entriesHtml = typeEntries.length ? '<div class="list">' + typeEntries.map(function(m){
+      var cookTag = COOK_MODE_TAG[m.cookMode] ? '<span class="tag" style="margin-left:6px">'+COOK_MODE_TAG[m.cookMode]+'</span>' : "";
+      var metaLine = '<div class="meta">'+m.qty+'g ・ '+Math.round(m.nutrients.kcal)+' kcal ・ P'+round1(m.nutrients.protein)+' F'+round1(m.nutrients.fat)+' C'+round1(m.nutrients.carb)+'</div>';
+      var nameBlock = (m.cookMode==="home" && m.ingredients && m.ingredients.length)
+        ? '<details class="meal-detail"><summary>'+escapeAttr(m.name)+cookTag+'</summary>'
+          + '<div class="ingredient-detail-list">' + m.ingredients.map(function(ing){ return '<div>・'+escapeAttr(ing.name)+' '+Math.round(ing.estimatedGrams||0)+'g</div>'; }).join("") + '</div>'
+          + '</details>'
+        : '<div class="name">'+escapeAttr(m.name)+cookTag+'</div>';
       return '<div class="row-item" data-id="'+m.id+'">'
-        + '<div class="main"><div class="name">'+m.name+'</div><div class="meta">'+m.qty+'g ・ '+Math.round(m.nutrients.kcal)+' kcal ・ P'+round1(m.nutrients.protein)+' F'+round1(m.nutrients.fat)+' C'+round1(m.nutrients.carb)+'</div></div>'
+        + '<div class="main">'+nameBlock+metaLine+'</div>'
         + '<button class="btn ghost small meal-del" data-id="'+m.id+'">削除</button>'
         + '</div>';
     }).join("") + '</div>'
     : '<div class="empty"><div class="glyph">🍴</div><p>この食事はまだ記録されていません。</p></div>';
+
+  var typeMetersHtml = typeEntries.length ? mealTypeMeters(typeTotals) : "";
 
   var pantryMatches = state.pantry.filter(function(p){ return p.foodKey; });
 
@@ -1562,6 +1599,7 @@ function renderMeals(){
     +   '<div class="form-actions"><button type="submit" class="btn">'+MEAL_LABEL[mealsUi.type]+'に追加</button></div>'
     + '</form>'
     + '</div>'
+    + (typeMetersHtml ? '<div class="card"><div class="card-head"><h2>'+MEAL_LABEL[mealsUi.type]+'の栄養バランス</h2></div><div class="sub">1日の目標に対する、この食事ぶんの割合</div><div class="meters">'+typeMetersHtml+'</div></div>' : '')
     + '<div class="card"><div class="card-head"><h2>'+MEAL_LABEL[mealsUi.type]+'の記録</h2></div><div class="sub">'+mealsUi.date+'</div>'+entriesHtml+'</div>';
 
   document.getElementById("mf_date").addEventListener("change", function(){ mealsUi.date=this.value; renderMeals(); });
@@ -1667,22 +1705,28 @@ function renderMeals(){
         var item = photoUi.items[idx];
         var qty = parseFloat(row.querySelector(".pi-qty").value)||0;
         var nutrients = nutrientsForPhotoItem(item, qty);
-        state.meals.push({ id: uid(), date: mealsUi.date, type: mealsUi.type, name: item.name, qty: qty, nutrients: nutrients, createdAt: Date.now() });
 
         var cookBtn = row.querySelector(".cook-btn.active");
         var isHomeCooked = cookBtn ? cookBtn.dataset.mode !== "out" : false;
+        var usedIngredients = [];
         if(isHomeCooked){
           row.querySelectorAll(".ingredient-row").forEach(function(ingRow){
             var use = ingRow.querySelector(".ing-use").checked;
             if(!use) return;
+            var ingName = (ingRow.querySelector(".ing-name").value||"").trim();
+            var ingQty = parseFloat(ingRow.querySelector(".ing-qty").value)||0;
+            if(ingName) usedIngredients.push({ name: ingName, estimatedGrams: ingQty });
             var linkSel = ingRow.querySelector(".ing-link");
             var pantryId = linkSel ? linkSel.value : "";
             if(!pantryId) return;
-            var ingQty = parseFloat(ingRow.querySelector(".ing-qty").value)||0;
             var stock = state.pantry.find(function(p){ return p.id===pantryId; });
             if(stock){ deductPantryForConsumption(stock, ingQty); pantryChanged = true; }
           });
         }
+        state.meals.push({
+          id: uid(), date: mealsUi.date, type: mealsUi.type, name: item.name, qty: qty, nutrients: nutrients, createdAt: Date.now(),
+          cookMode: isHomeCooked ? "home" : "out", ingredients: usedIngredients
+        });
       });
       if(photoUi.previewUrl) URL.revokeObjectURL(photoUi.previewUrl);
       photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
