@@ -679,23 +679,36 @@ async function runPhotoAnalysis(file){
         }],
         generationConfig: { maxOutputTokens: 1024 }
       });
-      var res;
-      /* Gemini's free/flash tier returns 503 fairly often under load; one short retry
-         clears most of these without bothering the viewer with a transient error */
+      var res = null;
+      var timedOut = false;
+      /* Gemini's free/flash tier returns 503 fairly often under load, and observed in practice
+         to sometimes hang over a minute before even returning that 503 — so each attempt gets
+         a hard timeout rather than letting the viewer stare at "解析中…" for minutes */
       for(var attempt=0; attempt<2; attempt++){
-        res = await fetch(geminiUrl, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
-          body: requestBody
-        });
-        if(res.ok || (res.status!==503 && res.status!==500)) break;
+        timedOut = false;
+        var controller = new AbortController();
+        var timeoutId = setTimeout(function(){ timedOut = true; controller.abort(); }, 25000);
+        try{
+          res = await fetch(geminiUrl, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
+            body: requestBody,
+            signal: controller.signal
+          });
+        }catch(fetchErr){
+          res = null;
+        }
+        clearTimeout(timeoutId);
+        if(res && (res.ok || (res.status!==503 && res.status!==500))) break;
         if(attempt===0) await new Promise(function(r){ setTimeout(r, 1500); });
       }
-      if(!res.ok){
-        var errBody = await res.json().catch(function(){ return null; });
+      if(!res || !res.ok){
+        var errBody = res ? await res.json().catch(function(){ return null; }) : null;
         var errStatus = errBody && errBody.error && errBody.error.status;
         var errReason = errBody && errBody.error && errBody.error.details && errBody.error.details[0] && errBody.error.details[0].reason;
-        var code = (errReason==="API_KEY_INVALID" || res.status===401 || res.status===403 || errStatus==="PERMISSION_DENIED") ? "invalid_key"
+        var code = timedOut ? "server_overloaded"
+          : !res ? "network_error"
+          : (errReason==="API_KEY_INVALID" || res.status===401 || res.status===403 || errStatus==="PERMISSION_DENIED") ? "invalid_key"
           : (res.status===429 || errStatus==="RESOURCE_EXHAUSTED") ? "rate_limited"
           : (res.status===503 || res.status===500 || errStatus==="UNAVAILABLE") ? "server_overloaded"
           : "network_error";
