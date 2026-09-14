@@ -409,6 +409,7 @@ var geminiApiKey = "";
 try{ geminiApiKey = localStorage.getItem("nutristock_geminiApiKey") || ""; }catch(e){}
 function hasGeminiKey(){ return !!geminiApiKey; }
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
+var aiSuggestUi = { status:"idle", dishes:[], error:"" };
 
 /* ---------- local usage log (NOT Google's official quota — just what this app itself has sent) ---------- */
 var GEMINI_USAGE_LOG_MAX = 200;
@@ -668,10 +669,16 @@ document.addEventListener("keydown", function(e){
   if(e.key === "Escape" && !document.getElementById("scannerOverlay").hidden) closeScanner();
 });
 
-function geminiPhotoItemsFromResponseText(text, validPantryIds){
+/* shared by every feature that asks Gemini for a JSON array (photo analysis, AI meal
+   suggestions): strips a ```...``` code fence if present and normalizes to an array. */
+function parseGeminiJsonArray(text){
   var cleaned = String(text||"").trim().replace(/^```[a-zA-Z]*\n?/,"").replace(/```\s*$/,"").trim();
   var parsed = JSON.parse(cleaned);
-  var arr = Array.isArray(parsed) ? parsed : (parsed && typeof parsed==="object" ? [parsed] : []);
+  return Array.isArray(parsed) ? parsed : (parsed && typeof parsed==="object" ? [parsed] : []);
+}
+
+function geminiPhotoItemsFromResponseText(text, validPantryIds){
+  var arr = parseGeminiJsonArray(text);
   return arr.slice(0,4).map(function(it){
     var estimatedGrams = Number(it.estimatedGrams)||0;
     var vegetableGrams = Number(it.vegetableGrams)||0;
@@ -685,6 +692,7 @@ function geminiPhotoItemsFromResponseText(text, validPantryIds){
     });
     var item = {
       name: String(it.name||"名称不明の料理").slice(0,60),
+      reason: String(it.reason||"").slice(0,120),
       estimatedGrams: estimatedGrams,
       kcal: Number(it.kcal)||0, protein: Number(it.protein)||0, fat: Number(it.fat)||0,
       carb: Number(it.carb)||0, fiber: Number(it.fiber)||0, salt: Number(it.salt)||0,
@@ -715,6 +723,67 @@ function ingredientRowHtml(ing){
     + '</div>';
 }
 
+/* shared low-level caller for every Gemini text/vision request in the app (photo analysis,
+   icon guessing, meal suggestions). Centralizes the retry-on-503 + hard-timeout + error-code
+   mapping logic that would otherwise be copy-pasted at every call site (it already was, twice,
+   before this refactor — see NOTES.md). Returns { ok:true, text } or { ok:false, code }. */
+async function callGeminiText(promptText, opts){
+  opts = opts || {};
+  if(!hasGeminiKey()) return { ok:false, code:"invalid_key" };
+  var geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + geminiModel + ":generateContent";
+  var parts = [{ text: promptText }];
+  if(opts.image) parts.push({ inlineData: { mimeType: opts.image.mimeType, data: opts.image.data } });
+  var requestBody = JSON.stringify({
+    contents: [{ parts: parts }],
+    generationConfig: { maxOutputTokens: opts.maxOutputTokens || 1024 }
+  });
+  var res = null;
+  var timedOut = false;
+  var attempts = opts.noRetry ? 1 : 2;
+  /* Gemini's free/flash tier returns 503 fairly often under load, and observed in practice
+     to sometimes hang over a minute before even returning that 503 — so each attempt gets
+     a hard timeout rather than letting the viewer stare at a loading state for minutes */
+  for(var attempt=0; attempt<attempts; attempt++){
+    timedOut = false;
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function(){ timedOut = true; controller.abort(); }, opts.timeoutMs || 25000);
+    try{
+      res = await fetch(geminiUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
+        body: requestBody,
+        signal: controller.signal
+      });
+    }catch(fetchErr){
+      res = null;
+    }
+    clearTimeout(timeoutId);
+    if(res && (res.ok || (res.status!==503 && res.status!==500))) break;
+    if(attempt < attempts-1) await new Promise(function(r){ setTimeout(r, 1500); });
+  }
+  if(!res || !res.ok){
+    var errBody = res ? await res.json().catch(function(){ return null; }) : null;
+    var errStatus = errBody && errBody.error && errBody.error.status;
+    var errReason = errBody && errBody.error && errBody.error.details && errBody.error.details[0] && errBody.error.details[0].reason;
+    var code = timedOut ? "server_overloaded"
+      : !res ? "network_error"
+      : (errReason==="API_KEY_INVALID" || res.status===401 || res.status===403 || errStatus==="PERMISSION_DENIED") ? "invalid_key"
+      : (res.status===429 || errStatus==="RESOURCE_EXHAUSTED") ? "rate_limited"
+      : (res.status===503 || res.status===500 || errStatus==="UNAVAILABLE") ? "server_overloaded"
+      : "network_error";
+    logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: false, code: code });
+    return { ok:false, code: code };
+  }
+  var data = await res.json();
+  var text = "";
+  var candidate = data.candidates && data.candidates[0];
+  var cParts = candidate && candidate.content && candidate.content.parts;
+  (cParts||[]).forEach(function(part){ if(part.text) text += part.text; });
+  var usage = data.usageMetadata || {};
+  logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: true, promptTokens: usage.promptTokenCount||0, outputTokens: usage.candidatesTokenCount||0 });
+  return { ok:true, text: text };
+}
+
 async function runPhotoAnalysis(file){
   if(!hasGeminiKey()){
     photoUi.status = "error";
@@ -736,68 +805,18 @@ async function runPhotoAnalysis(file){
     if(!imgSource || !imgSource.data){
       photoUi.status = "error"; photoUi.error = PHOTO_ERROR_MESSAGES.read_failed; renderMeals(); return;
     }
+    var result = await callGeminiText(prompt, { image: imgSource, maxOutputTokens: 1024 });
+    if(!result.ok){
+      photoUi.status = "error"; photoUi.error = PHOTO_ERROR_MESSAGES[result.code] || PHOTO_ERROR_MESSAGES.network_error; renderMeals(); return;
+    }
     try{
-      var geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + geminiModel + ":generateContent";
-      var requestBody = JSON.stringify({
-        contents: [{
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: imgSource.mimeType, data: imgSource.data } }
-          ]
-        }],
-        generationConfig: { maxOutputTokens: 1024 }
-      });
-      var res = null;
-      var timedOut = false;
-      /* Gemini's free/flash tier returns 503 fairly often under load, and observed in practice
-         to sometimes hang over a minute before even returning that 503 — so each attempt gets
-         a hard timeout rather than letting the viewer stare at "解析中…" for minutes */
-      for(var attempt=0; attempt<2; attempt++){
-        timedOut = false;
-        var controller = new AbortController();
-        var timeoutId = setTimeout(function(){ timedOut = true; controller.abort(); }, 25000);
-        try{
-          res = await fetch(geminiUrl, {
-            method: "POST",
-            headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
-            body: requestBody,
-            signal: controller.signal
-          });
-        }catch(fetchErr){
-          res = null;
-        }
-        clearTimeout(timeoutId);
-        if(res && (res.ok || (res.status!==503 && res.status!==500))) break;
-        if(attempt===0) await new Promise(function(r){ setTimeout(r, 1500); });
-      }
-      if(!res || !res.ok){
-        var errBody = res ? await res.json().catch(function(){ return null; }) : null;
-        var errStatus = errBody && errBody.error && errBody.error.status;
-        var errReason = errBody && errBody.error && errBody.error.details && errBody.error.details[0] && errBody.error.details[0].reason;
-        var code = timedOut ? "server_overloaded"
-          : !res ? "network_error"
-          : (errReason==="API_KEY_INVALID" || res.status===401 || res.status===403 || errStatus==="PERMISSION_DENIED") ? "invalid_key"
-          : (res.status===429 || errStatus==="RESOURCE_EXHAUSTED") ? "rate_limited"
-          : (res.status===503 || res.status===500 || errStatus==="UNAVAILABLE") ? "server_overloaded"
-          : "network_error";
-        logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: false, code: code, status: res ? res.status : null });
-        photoUi.status = "error"; photoUi.error = PHOTO_ERROR_MESSAGES[code]; renderMeals(); return;
-      }
-      var data = await res.json();
-      var text = "";
-      var candidate = data.candidates && data.candidates[0];
-      var parts = candidate && candidate.content && candidate.content.parts;
-      (parts||[]).forEach(function(part){ if(part.text) text += part.text; });
       var validPantryIds = state.pantry.map(function(p){ return p.id; });
-      photoUi.items = geminiPhotoItemsFromResponseText(text, validPantryIds);
+      photoUi.items = geminiPhotoItemsFromResponseText(result.text, validPantryIds);
       photoUi.status = photoUi.items.length ? "done" : "error";
       if(!photoUi.items.length) photoUi.error = "食品を認識できませんでした。もう一度お試しください。";
-      var usage = data.usageMetadata || {};
-      logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: true, promptTokens: usage.promptTokenCount||0, outputTokens: usage.candidatesTokenCount||0 });
     }catch(e){
       photoUi.status = "error";
-      photoUi.error = (e instanceof SyntaxError) ? PHOTO_ERROR_MESSAGES.invalid_json : PHOTO_ERROR_MESSAGES.network_error;
-      logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: false, code: "exception" });
+      photoUi.error = PHOTO_ERROR_MESSAGES.invalid_json;
     }
     renderMeals();
   });
@@ -808,30 +827,64 @@ async function runPhotoAnalysis(file){
    before this resolves, so failure/no-key here is silent and never blocks the pantry add. */
 async function guessFoodIcon(name){
   if(!hasGeminiKey() || !name) return null;
+  var result = await callGeminiText(
+    "次の食品を最もよく表す絵文字を1つだけ選び、絵文字1文字だけを返してください。説明文・記号・引用符は一切付けないでください。食品名: " + name,
+    { maxOutputTokens: 20, noRetry: true }
+  );
+  if(!result.ok) return null;
+  var candidate = result.text.trim().split(/\s+/)[0] || "";
+  /* reject anything that isn't a short, letter/digit-free reply — a real answer here is
+     one emoji; longer text usually means the model added an explanation we can't use */
+  if(candidate && candidate.length<=8 && !/[a-zA-Z0-9]/.test(candidate)) return candidate;
+  return null;
+}
+
+/* AI-driven version of the home tab's "tonight's suggestion" — button-triggered (never
+   automatic) so opening/switching to the home tab never spends API quota by itself.
+   Reuses geminiPhotoItemsFromResponseText()'s dish+ingredients shape since the prompt asks
+   for the exact same JSON structure the photo-analysis feature already produces. */
+async function runAiSuggestions(){
+  if(!hasGeminiKey()){
+    aiSuggestUi.status = "error";
+    aiSuggestUi.error = "設定タブでGemini APIキーを登録してください。";
+    renderHome();
+    return;
+  }
+  if(!state.pantry.length){
+    aiSuggestUi.status = "error";
+    aiSuggestUi.error = "パントリーに食材が登録されていません。まずは在庫を登録してください。";
+    renderHome();
+    return;
+  }
+  aiSuggestUi.status = "loading"; aiSuggestUi.dishes = []; aiSuggestUi.error = "";
+  renderHome();
+  var pantrySorted = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
+  var pantryContext = pantrySorted.map(function(p){ return { id:p.id, name:p.name, qty:p.qty, unit:p.unit, daysUntilExpiry: daysUntil(p.expiry) }; });
+  var prompt = "あなたは家庭料理のアドバイザー兼栄養士です。ユーザーの現在の食材在庫（パントリー）は次の通りです（daysUntilExpiryが小さいほど賞味期限が近く、優先的に使うべき食材です）。\n"
+    + JSON.stringify(pantryContext) + "\n"
+    + "この在庫を使って作れる具体的な料理を最大4つ提案してください。特に賞味期限が近い食材を優先的に使う組み合わせを考えてください。\n"
+    + "各料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、実際にその料理を作るのに必要な主要な材料（調味料も含めてよい）を挙げ、それぞれが上記在庫の中にあるかどうか判定してください。\n"
+    + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
+    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}]}]\n'
+    + "数値はすべて概算で構いません。在庫だけで無理に完結させず、一般的なレシピとして自然な材料を挙げてください（在庫に無い調味料等が混ざるのは自然です）。ただし主役の食材はできるだけ在庫にあるものを使ってください。";
+
+  var result = await callGeminiText(prompt, { maxOutputTokens: 1500 });
+  if(!result.ok){
+    aiSuggestUi.status = "error";
+    aiSuggestUi.error = PHOTO_ERROR_MESSAGES[result.code] || PHOTO_ERROR_MESSAGES.network_error;
+    renderHome();
+    return;
+  }
   try{
-    var res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + geminiModel + ":generateContent", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: "次の食品を最もよく表す絵文字を1つだけ選び、絵文字1文字だけを返してください。説明文・記号・引用符は一切付けないでください。食品名: " + name }] }],
-        generationConfig: { maxOutputTokens: 20 }
-      })
-    });
-    var ok = res.ok;
-    var emoji = null;
-    if(ok){
-      var data = await res.json();
-      var text = "";
-      var parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
-      (parts||[]).forEach(function(part){ if(part.text) text += part.text; });
-      var candidate = text.trim().split(/\s+/)[0] || "";
-      /* reject anything that isn't a short, letter/digit-free reply — a real answer here is
-         one emoji; longer text usually means the model added an explanation we can't use */
-      if(candidate && candidate.length<=8 && !/[a-zA-Z0-9]/.test(candidate)) emoji = candidate;
-    }
-    logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: ok, code: ok ? undefined : "icon_guess_failed" });
-    return emoji;
-  }catch(e){ return null; }
+    var validPantryIds = state.pantry.map(function(p){ return p.id; });
+    aiSuggestUi.dishes = geminiPhotoItemsFromResponseText(result.text, validPantryIds);
+    aiSuggestUi.status = aiSuggestUi.dishes.length ? "done" : "error";
+    if(!aiSuggestUi.dishes.length) aiSuggestUi.error = "提案を作成できませんでした。もう一度お試しください。";
+  }catch(e){
+    aiSuggestUi.status = "error";
+    aiSuggestUi.error = PHOTO_ERROR_MESSAGES.invalid_json;
+  }
+  renderHome();
 }
 
 /* ---------- targets ---------- */
@@ -1106,6 +1159,41 @@ function renderHome(){
     }).join("") + '</div>'
     : '<div class="empty"><div class="glyph">🍽️</div><p>食材と食事記録がそろうと、おすすめの献立をここに表示します。</p></div>';
 
+  var suggestCard;
+  if(hasGeminiKey()){
+    var aiBody;
+    if(aiSuggestUi.status==="loading"){
+      aiBody = '<div class="hint" style="margin-top:10px">AIが考え中…（5〜30秒ほどかかります）</div>';
+    } else if(aiSuggestUi.status==="error"){
+      aiBody = '<div class="hint" style="margin-top:10px;color:var(--crit)">'+aiSuggestUi.error+'</div>';
+    } else if(aiSuggestUi.status==="done" && aiSuggestUi.dishes.length){
+      aiBody = '<div class="suggest-list" style="margin-top:10px">' + aiSuggestUi.dishes.map(function(d, idx){
+        var ingredientsHtml = (d.ingredients||[]).map(function(ing){
+          var has = !!ing.matchedPantryId;
+          var statusHtml = has
+            ? '<span style="font-size:11px;color:var(--good-ink);background:var(--good-soft);padding:1px 8px;border-radius:999px;white-space:nowrap;flex-shrink:0">在庫あり</span>'
+            : '<span style="font-size:11px;color:var(--crit-ink);background:var(--crit-soft);padding:1px 8px;border-radius:999px;white-space:nowrap;flex-shrink:0">不足</span>';
+          return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+            + '<span>・'+escapeAttr(ing.name)+' '+Math.round(ing.estimatedGrams||0)+'g</span>'
+            + statusHtml
+            + '</div>';
+        }).join("");
+        return '<div class="suggest-card"><div class="ic">🍳</div><div style="flex:1;min-width:0">'
+          + '<details class="meal-detail"><summary class="t">'+escapeAttr(d.name)+'</summary>'
+          +   '<div class="ingredient-detail-list" style="margin-top:6px">'+ingredientsHtml+'</div>'
+          + '</details>'
+          + '<div class="d">'+escapeAttr(d.reason)+'</div>'
+          + '<button type="button" class="btn small ai-suggest-log-btn" data-idx="'+idx+'" style="margin-top:8px">これを記録する</button>'
+          + '</div></div>';
+      }).join("") + '</div>';
+    } else {
+      aiBody = '<div class="hint" style="margin-top:10px">ボタンを押すと、在庫（特に賞味期限が近い食材）から作れる料理をAIが提案します。</div>';
+    }
+    suggestCard = '<div class="card"><div class="card-head"><h2>今夜のおすすめ（AI）</h2><button type="button" id="aiSuggestBtn" class="btn secondary small">✨ AIに提案してもらう</button></div><div class="sub">料理名を押すと、必要な材料と在庫の過不足を確認できます</div>'+aiBody+'</div>';
+  } else {
+    suggestCard = '<div class="card"><div class="card-head"><h2>今夜のおすすめ</h2></div><div class="sub">期限が近い食材 × 不足栄養素から提案（設定タブでGemini APIキーを登録すると、AIによる具体的な料理提案に切り替わります）</div>'+suggestHtml+'</div>';
+  }
+
   var kcalTile = '<div class="stat-tile"><div class="label">本日の摂取エネルギー</div><div class="value">'+Math.round(totals.kcal)+' <small>/ '+(targets?(targets.kcal+stepsExtra):"–")+' kcal</small></div></div>';
   var vegTile = '<div class="stat-tile"><div class="label">本日の野菜摂取量</div><div class="value">'+Math.round(totals.veg)+' <small>/ '+(targets?targets.veg:350)+' g</small></div></div>';
   var pantryTile = '<div class="stat-tile"><div class="label">パントリー在庫</div><div class="value">'+state.pantry.length+' <small>品目</small></div></div>';
@@ -1123,7 +1211,7 @@ function renderHome(){
     '<div class="stat-row">'+kcalTile+vegTile+stepsTile+pantryTile+'</div>'
     + (targets ? '' : '<div class="card"><div class="suggest-card"><div class="ic">⚙️</div><div><div class="t">目標値が未設定です</div><div class="d">「設定」タブでプロフィールを入力すると、栄養目標を自動計算します。</div></div></div></div>')
     + '<div class="card"><div class="card-head"><h2>栄養バランス</h2></div><div class="sub">本日 '+todayStr()+' の合計摂取量</div><div class="meters">'+metersHtml+'</div></div>'
-    + '<div class="card"><div class="card-head"><h2>今夜のおすすめ</h2></div><div class="sub">期限が近い食材 × 不足栄養素から提案</div>'+suggestHtml+'</div>'
+    + suggestCard
     + '<div class="card"><div class="card-head"><h2>賞味期限が近い食材</h2></div><div class="sub">上位5件を表示</div>'+expiringHtml+'</div>';
 
   document.getElementById("stepsForm").addEventListener("submit", function(e){
@@ -1157,6 +1245,26 @@ function renderHome(){
           pantryChanged = true;
         }
       });
+      persist(pantryChanged ? ["meals","pantry"] : ["meals"]);
+      renderAll();
+    });
+  });
+
+  var aiSuggestBtn = document.getElementById("aiSuggestBtn");
+  if(aiSuggestBtn) aiSuggestBtn.addEventListener("click", runAiSuggestions);
+
+  el.querySelectorAll(".ai-suggest-log-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var d = aiSuggestUi.dishes[parseInt(btn.dataset.idx, 10)];
+      if(!d) return;
+      var nutrients = nutrientsForPhotoItem(d, d.estimatedGrams);
+      var pantryChanged = false;
+      (d.ingredients||[]).forEach(function(ing){
+        if(!ing.matchedPantryId) return;
+        var stock = state.pantry.find(function(p){ return p.id===ing.matchedPantryId; });
+        if(stock){ deductPantryForConsumption(stock, ing.estimatedGrams); pantryChanged = true; }
+      });
+      state.meals.push({ id: uid(), date: todayStr(), type: "dinner", name: d.name, qty: d.estimatedGrams, nutrients: nutrients, createdAt: Date.now(), cookMode: "home", ingredients: d.ingredients||[] });
       persist(pantryChanged ? ["meals","pantry"] : ["meals"]);
       renderAll();
     });
