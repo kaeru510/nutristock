@@ -1001,6 +1001,38 @@ var EXPIRY_FILTER_OPTIONS = [
 function foodOptionsHtml(selected){
   return FOOD_DB.map(function(f){ return '<option value="'+f.key+'"'+(f.key===selected?" selected":"")+'>'+f.name+'</option>'; }).join("");
 }
+function checkExistingStock(matches){
+  var noteEl = document.getElementById("pf_barcodeNote");
+  if(!noteEl) return;
+  if(!matches.length){ noteEl.innerHTML = ""; return; }
+  if(matches.length === 1){
+    var existing = matches[0];
+    var d = daysUntil(existing.expiry);
+    var expiryText = d<=0 ? "本日まで" : "あと"+d+"日";
+    var qtyStep = (existing.unit==="g" || existing.unit==="ml") ? "0.1" : "1";
+    noteEl.innerHTML =
+      '<div class="barcode-note">この食材はすでに在庫があります：現在 '+existing.qty+existing.unit+'（賞味期限 '+existing.expiry+' ・ '+expiryText+'）'
+      + '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">'
+      +   '<input type="number" id="pf_incQty" min="0" step="'+qtyStep+'" value="1" style="width:70px;padding:7px 9px;border-radius:8px;border:1px solid var(--border)">'
+      +   '<span style="font-size:12.5px;color:var(--ink-2)">'+existing.unit+' 追加</span>'
+      +   '<button type="button" id="pf_incBtn" class="btn small">反映する</button>'
+      + '</div>'
+      + '<div class="hint" style="margin-top:4px">賞味期限が違うものを別に管理したい場合は、下のフォームからそのまま新規追加できます</div></div>';
+    document.getElementById("pf_incBtn").addEventListener("click", function(){
+      var add = parseFloat(document.getElementById("pf_incQty").value) || 0;
+      if(add <= 0) return;
+      existing.qty = round1(existing.qty + add);
+      persist(["pantry"]);
+      pendingBarcode = null;
+      renderAll();
+    });
+  } else {
+    noteEl.innerHTML = '<div class="barcode-note">この食材は複数の在庫があります：'
+      + matches.map(function(m){ return m.qty+m.unit+'（あと'+daysUntil(m.expiry)+'日）'; }).join('、')
+      + '<div class="hint" style="margin-top:4px">下のフォームからそのまま新規追加できます</div></div>';
+  }
+}
+
 function renderPantry(){
   var el = document.getElementById("panel-pantry");
 
@@ -1084,6 +1116,12 @@ function renderPantry(){
     document.getElementById("pf_customWrap").style.display = this.value==="__custom" ? "" : "none";
     var f = FOOD_BY_KEY[this.value];
     if(f && f.unit) document.getElementById("pf_unit").value = f.unit;
+    pendingBarcode = null;
+    if(this.value && this.value!=="__custom"){
+      checkExistingStock(state.pantry.filter(function(p){ return p.foodKey===f.key; }));
+    } else {
+      checkExistingStock([]);
+    }
   });
 
   if(state.pantry.length){
@@ -1106,13 +1144,17 @@ function renderPantry(){
       var b = e.target.closest("button[data-idx]"); if(!b) return;
       var r = state.recentFoods[parseInt(b.dataset.idx,10)];
       if(!r) return;
+      pendingBarcode = null;
       if(r.foodKey && FOOD_BY_KEY[r.foodKey]){
         document.getElementById("pf_food").value = r.foodKey;
         document.getElementById("pf_customWrap").style.display = "none";
+        checkExistingStock(state.pantry.filter(function(p){ return p.foodKey===r.foodKey; }));
       } else {
         document.getElementById("pf_food").value = "__custom";
         document.getElementById("pf_customWrap").style.display = "";
         document.getElementById("pf_custom").value = r.name;
+        document.getElementById("pf_customCat").value = r.category || "other";
+        checkExistingStock(state.pantry.filter(function(p){ return !p.foodKey && p.name===r.name; }));
       }
       document.getElementById("pf_unit").value = r.unit;
     });
@@ -1158,25 +1200,7 @@ function renderPantry(){
       pendingBarcode = code;
 
       if(existing){
-        var d = daysUntil(existing.expiry);
-        var expiryText = d<=0 ? "本日まで" : "あと"+d+"日";
-        var qtyStep = (existing.unit==="g" || existing.unit==="ml") ? "0.1" : "1";
-        noteEl.innerHTML =
-          '<div class="barcode-note">この商品はすでに在庫があります：現在 '+existing.qty+existing.unit+'（賞味期限 '+existing.expiry+' ・ '+expiryText+'）'
-          + '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">'
-          +   '<input type="number" id="pf_incQty" min="0" step="'+qtyStep+'" value="1" style="width:70px;padding:7px 9px;border-radius:8px;border:1px solid var(--border)">'
-          +   '<span style="font-size:12.5px;color:var(--ink-2)">'+existing.unit+' 追加</span>'
-          +   '<button type="button" id="pf_incBtn" class="btn small">反映する</button>'
-          + '</div>'
-          + '<div class="hint" style="margin-top:4px">賞味期限が違うものを別に管理したい場合は、下のフォームからそのまま新規追加できます</div></div>';
-        document.getElementById("pf_incBtn").addEventListener("click", function(){
-          var add = parseFloat(document.getElementById("pf_incQty").value) || 0;
-          if(add <= 0) return;
-          existing.qty = round1(existing.qty + add);
-          persist(["pantry"]);
-          pendingBarcode = null;
-          renderAll();
-        });
+        checkExistingStock([existing]);
       } else if(known){
         noteEl.innerHTML = '<div class="barcode-note">前回の登録内容を自動入力しました（JAN: '+escapeAttr(code)+'）</div>';
       } else {
