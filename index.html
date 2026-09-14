@@ -312,13 +312,6 @@ var PROTEIN_GOAL_OPTIONS = [
   {v:1.6,label:"筋トレ・運動習慣がある"},
   {v:2.0,label:"本格的に鍛えている"}
 ];
-function proteinEquivalentText(grams){
-  if(!grams || grams<=0) return "";
-  var chicken = Math.round(grams / FOOD_BY_KEY.chicken_breast.p * 100);
-  var eggGrams = 50; var eggProtein = FOOD_BY_KEY.egg.p * eggGrams/100;
-  var eggs = Math.round(grams / eggProtein);
-  return "鶏むね肉 約"+chicken+"g、または卵 約"+eggs+"個ぶん";
-}
 
 /* ---------- state ---------- */
 function defaultState(){
@@ -810,6 +803,37 @@ async function runPhotoAnalysis(file){
   });
 }
 
+/* best-effort emoji icon for pantry items that have no FOOD_DB match (barcode/custom entries).
+   Fire-and-forget: the item is already saved and rendered with the category fallback icon
+   before this resolves, so failure/no-key here is silent and never blocks the pantry add. */
+async function guessFoodIcon(name){
+  if(!hasGeminiKey() || !name) return null;
+  try{
+    var res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + geminiModel + ":generateContent", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: "次の食品を最もよく表す絵文字を1つだけ選び、絵文字1文字だけを返してください。説明文・記号・引用符は一切付けないでください。食品名: " + name }] }],
+        generationConfig: { maxOutputTokens: 20 }
+      })
+    });
+    var ok = res.ok;
+    var emoji = null;
+    if(ok){
+      var data = await res.json();
+      var text = "";
+      var parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+      (parts||[]).forEach(function(part){ if(part.text) text += part.text; });
+      var candidate = text.trim().split(/\s+/)[0] || "";
+      /* reject anything that isn't a short, letter/digit-free reply — a real answer here is
+         one emoji; longer text usually means the model added an explanation we can't use */
+      if(candidate && candidate.length<=8 && !/[a-zA-Z0-9]/.test(candidate)) emoji = candidate;
+    }
+    logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: ok, code: ok ? undefined : "icon_guess_failed" });
+    return emoji;
+  }catch(e){ return null; }
+}
+
 /* ---------- targets ---------- */
 function calcTargets(profile){
   var bmr = profile.sex==="male"
@@ -1149,7 +1173,7 @@ function rowItemHtml(p, showActions){
   var d = daysUntil(p.expiry);
   var b = expiryBadge(d);
   var f = FOOD_BY_KEY[p.foodKey];
-  var icon = CAT_ICON[p.category] || "🍽️";
+  var icon = p.icon || CAT_ICON[p.category] || "🍽️";
   var actions = showActions
     ? '<button class="btn ghost small minus-btn" data-id="'+p.id+'" title="1つ使った">－1</button>'
       + '<button class="btn ghost small consume-btn" data-id="'+p.id+'" title="残り全部を使い切った/廃棄した">🗑</button>'
@@ -1426,11 +1450,13 @@ function renderPantry(){
       var sameFood = custom ? (!p.foodKey && p.name===name) : (p.foodKey===foodKey);
       return sameFood && p.expiry===expiry;
     });
+    var pushedItem = null;
     if(mergeTarget){
       mergeTarget.qty = round1(mergeTarget.qty + qty);
       if(pendingBarcode && !mergeTarget.barcode) mergeTarget.barcode = pendingBarcode;
     } else {
-      state.pantry.push({ id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, addedAt: Date.now() });
+      pushedItem = { id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, addedAt: Date.now() };
+      state.pantry.push(pushedItem);
     }
     pushRecentFood({ name: name, foodKey: custom?null:foodKey, unit: unit, category: cat });
     state.shoppingList = state.shoppingList.filter(function(s){ return s.name !== name; }); /* bought it, drop from the list if present */
@@ -1438,6 +1464,19 @@ function renderPantry(){
     var noteEl = document.getElementById("pf_barcodeNote");
     if(noteEl) noteEl.innerHTML = "";
     persist(barcodeChanged ? ["pantry","barcodes","recentFoods","shoppingList"] : ["pantry","recentFoods","shoppingList"]); renderAll();
+
+    /* custom/barcode items have no FOOD_DB icon — ask Gemini for a fitting emoji in the
+       background (only once per item) rather than blocking the add on it */
+    var iconTarget = mergeTarget || pushedItem;
+    if(custom && iconTarget && !iconTarget.icon){
+      guessFoodIcon(name).then(function(emoji){
+        if(!emoji) return;
+        var stillThere = state.pantry.find(function(p){ return p.id===iconTarget.id; });
+        if(!stillThere) return;
+        stillThere.icon = emoji;
+        persist(["pantry"]); renderAll();
+      });
+    }
   });
 
   if(!el.dataset.stockBound){
@@ -1804,8 +1843,7 @@ function renderSettings(){
       '<div class="card"><div class="card-head"><h2>現在の栄養目標</h2></div><div class="sub">1日あたり・必要に応じて数値を直接調整できます</div>'
       + '<form id="targetForm" class="inline"><div class="field-row">'
       + Object.keys(NUTRIENT_LABEL).map(function(k){
-          var hint = k==="protein" ? '<div class="hint" style="margin-top:2px">目安：'+proteinEquivalentText(t.protein)+'</div>' : "";
-          return '<div class="field"><label>'+NUTRIENT_LABEL[k]+' ('+NUTRIENT_UNIT[k]+')</label><input class="tgt" data-key="'+k+'" type="number" step="1" value="'+t[k]+'">'+hint+'</div>';
+          return '<div class="field"><label>'+NUTRIENT_LABEL[k]+' ('+NUTRIENT_UNIT[k]+')</label><input class="tgt" data-key="'+k+'" type="number" step="1" value="'+t[k]+'"></div>';
         }).join("")
       + '</div><div class="form-actions"><button type="submit" class="btn secondary">目標値を保存</button></div></form></div>'
     ) : '')
