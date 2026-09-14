@@ -1062,11 +1062,6 @@ function renderHome(){
     var label = targets ? STATUS_LABEL[k][st] : "目標未設定";
     var note = "";
     if(k==="kcal" && stepsExtra) note = '<div class="note">歩数 '+steps.toLocaleString()+' 歩分 +'+stepsExtra+' kcal を加算</div>';
-    if(k==="protein" && targets){
-      var remaining = target - consumed;
-      if(remaining > 5) note = '<div class="note">あと'+Math.round(remaining)+'g目安：'+proteinEquivalentText(remaining)+'</div>';
-
-    }
     return '<div class="meter">'
       + '<div class="mh"><span class="name">'+NUTRIENT_LABEL[k]+'</span>'
       + '<span class="nums">'+round1(consumed)+' / '+(target||"–")+' '+NUTRIENT_UNIT[k]+'</span></div>'
