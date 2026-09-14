@@ -1393,12 +1393,13 @@ function renderMeals(){
     } else if(photoUi.status==="done" && photoUi.items.length){
       resultsHtml = '<div class="list" id="photoResults" style="margin-top:12px">' + photoUi.items.map(function(it, idx){
           var linkRow = state.pantry.length ? (
-            '<div class="link-row"><label>在庫と紐づけ</label><select class="pi-link" data-idx="'+idx+'">'
-            + '<option value="">紐づけない</option>'
+            '<div class="link-row"><label>使った在庫</label><select class="pi-link" data-idx="'+idx+'">'
+            + '<option value="">使っていない（在庫を減らさない）</option>'
             + state.pantry.map(function(p){
                 return '<option value="'+p.id+'"'+(it.matchedPantryId===p.id?" selected":"")+'>'+escapeAttr(p.name)+'（在庫'+p.qty+p.unit+'）</option>';
               }).join("")
             + '</select></div>'
+            + '<div class="hint" style="padding-left:28px;margin-top:-4px">選ぶと「選択した項目を追加」を押したときにこの食材ぶん在庫が減ります'+(it.matchedPantryId?"（AIが自動選択しました。違う場合は選び直してください）":"")+'</div>'
           ) : "";
           return '<div class="photo-row" data-idx="'+idx+'">'
             + '<div class="photo-row-top">'
