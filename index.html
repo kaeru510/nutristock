@@ -1229,7 +1229,16 @@ function renderPantry(){
       state.barcodes[pendingBarcode] = { name: name, unit: unit, category: cat };
       barcodeChanged = true;
     }
-    state.pantry.push({ id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, addedAt: Date.now() });
+    var mergeTarget = state.pantry.find(function(p){
+      var sameFood = custom ? (!p.foodKey && p.name===name) : (p.foodKey===foodKey);
+      return sameFood && p.expiry===expiry;
+    });
+    if(mergeTarget){
+      mergeTarget.qty = round1(mergeTarget.qty + qty);
+      if(pendingBarcode && !mergeTarget.barcode) mergeTarget.barcode = pendingBarcode;
+    } else {
+      state.pantry.push({ id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, addedAt: Date.now() });
+    }
     pushRecentFood({ name: name, foodKey: custom?null:foodKey, unit: unit, category: cat });
     state.shoppingList = state.shoppingList.filter(function(s){ return s.name !== name; }); /* bought it, drop from the list if present */
     pendingBarcode = null;
