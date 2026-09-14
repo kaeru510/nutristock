@@ -807,18 +807,10 @@ function suggestionList(){
     }
     if(!chosen.length) break;
 
-    var cats = chosen.map(function(c){ return c.f ? c.f.cat : null; });
-    var method = "調理";
-    if(cats.indexOf("fish")>=0) method = "焼く・煮る";
-    else if(cats.indexOf("meat")>=0 && cats.indexOf("veg")>=0) method = "炒め物";
-    else if(cats.indexOf("soy")>=0 && cats.indexOf("veg")>=0) method = "煮物";
-    else if(cats.indexOf("meat")>=0) method = "焼く・炒める";
-    else if(cats.indexOf("veg")>=0) method = "スープ・和え物";
-
     var coveredNutrients = [];
     chosen.forEach(function(c){ c.helps.forEach(function(h){ if(deficient.indexOf(h)>=0 && coveredNutrients.indexOf(h)<0) coveredNutrients.push(h); }); });
 
-    var names = chosen.map(function(c){ return c.p.name; }).join("＋");
+    var dishTitle = buildDishTitle(chosen);
     var minDays = Math.min.apply(null, chosen.map(function(c){ return c.days; }));
     var expiryText = minDays<=0 ? "本日中に期限" : "あと"+minDays+"日で期限";
     var reasonText = coveredNutrients.length ? coveredNutrients.map(function(k){ return NUTRIENT_LABEL[k]; }).join("・")+"を補給" : "食材を使い切る";
@@ -827,7 +819,7 @@ function suggestionList(){
       return { foodKey: c.p.foodKey, qty: defaultServingGrams(c.f.cat), pantryId: c.p.id, unit: c.p.unit };
     });
 
-    cards.push({ ic: icon, t: names+"の"+method, d: reasonText+" ・ "+expiryText, items: items });
+    cards.push({ ic: icon, t: dishTitle, d: reasonText+" ・ "+expiryText, items: items });
   }
 
   /* fallback: remaining soon items not used in a combo above */
@@ -849,6 +841,32 @@ function defaultServingGrams(cat){
   if(cat==="grain") return 150;
   if(cat==="veg") return 80;
   return 100;
+}
+var DISH_STYLES = {
+  meat: ["オイスター炒め","生姜炒め","にんにく醤油炒め","味噌炒め","甘辛炒め"],
+  fish: ["塩焼き","味噌煮","バター醤油炒め","照り焼き"],
+  soy: ["甘辛煮","味噌炒め","ごま和え","だし煮"],
+  egg_dairy: ["卵とじ","ソテー","グラタン風"]
+};
+function pickDishStyle(seed, cat){
+  var options = DISH_STYLES[cat] || ["炒め物"];
+  var hash = 0;
+  for(var i=0;i<seed.length;i++) hash += seed.charCodeAt(i);
+  return options[hash % options.length];
+}
+function buildDishTitle(chosen){
+  var protein = chosen.find(function(c){ return c.role==="protein"; });
+  var veg = chosen.find(function(c){ return c.role==="veg"; });
+  if(protein && veg && protein.f){
+    return protein.p.name+"と"+veg.p.name+"の"+pickDishStyle(protein.f.key, protein.f.cat);
+  }
+  if(protein && protein.f){
+    return protein.p.name+"の"+pickDishStyle(protein.f.key, protein.f.cat);
+  }
+  if(veg){
+    return veg.p.name+"のスープ・和え物";
+  }
+  return chosen.map(function(c){ return c.p.name; }).join("＋")+"の調理";
 }
 
 function renderHome(){
@@ -938,13 +956,10 @@ function renderHome(){
         if(!f) return;
         var nutrients = nutrientsForFood(f, item.qty);
         state.meals.push({ id: uid(), date: todayStr(), type: "dinner", name: f.name, qty: item.qty, nutrients: nutrients, createdAt: Date.now() });
-        if(item.unit === "g"){
-          var stock = state.pantry.find(function(p){ return p.id === item.pantryId; });
-          if(stock){
-            stock.qty = Math.max(0, round1(stock.qty - item.qty));
-            if(stock.qty === 0){ state.pantry = state.pantry.filter(function(p){ return p !== stock; }); }
-            pantryChanged = true;
-          }
+        var stock = state.pantry.find(function(p){ return p.id === item.pantryId; });
+        if(stock){
+          deductPantryForConsumption(stock, item.qty);
+          pantryChanged = true;
         }
       });
       persist(pantryChanged ? ["meals","pantry"] : ["meals"]);
@@ -963,7 +978,7 @@ function rowItemHtml(p, showActions){
   var d = daysUntil(p.expiry);
   var b = expiryBadge(d);
   var f = FOOD_BY_KEY[p.foodKey];
-  var icon = f ? CAT_ICON[f.cat] : "🍽️";
+  var icon = CAT_ICON[p.category] || "🍽️";
   var actions = showActions
     ? '<button class="btn ghost small minus-btn" data-id="'+p.id+'" title="1つ使った">－1</button>'
       + '<button class="btn ghost small consume-btn" data-id="'+p.id+'" title="残り全部を使い切った/廃棄した">🗑</button>'
@@ -987,6 +1002,13 @@ function pushRecentFood(entry){
   state.recentFoods = state.recentFoods.filter(function(r){ return r.name !== entry.name; });
   state.recentFoods.unshift(entry);
   if(state.recentFoods.length > 8) state.recentFoods.length = 8;
+}
+/* g/ml stock is reduced by the estimated amount actually used; count-based units
+   (個・パック・本・枚・その他) have no reliable gram equivalent, so treat one use as -1 */
+function deductPantryForConsumption(stock, estimatedGrams){
+  var amount = (stock.unit==="g" || stock.unit==="ml") ? estimatedGrams : 1;
+  stock.qty = Math.max(0, round1(stock.qty - amount));
+  if(stock.qty === 0){ state.pantry = state.pantry.filter(function(p){ return p !== stock; }); }
 }
 
 /* ---------- render: PANTRY ---------- */
@@ -1370,7 +1392,7 @@ function renderMeals(){
     +       '<input id="mf_cc" type="number" step="0.1" placeholder="C g">'
     +     '</div>'
     +   '</div>'
-    +   (pantryMatches.length ? '<label class="checkline"><input type="checkbox" id="mf_deduct" checked> 在庫（g単位のもの）があれば自動で減らす</label>' : '')
+    +   (pantryMatches.length ? '<label class="checkline"><input type="checkbox" id="mf_deduct" checked> 在庫があれば自動で減らす（個数単位は1つ分として減算）</label>' : '')
     +   '<div class="form-actions"><button type="submit" class="btn">'+MEAL_LABEL[mealsUi.type]+'に追加</button></div>'
     + '</form>'
     + '</div>'
@@ -1407,8 +1429,8 @@ function renderMeals(){
       nutrients = nutrientsForFood(f, qty);
       var deductEl = document.getElementById("mf_deduct");
       if(deductEl && deductEl.checked){
-        var stock = state.pantry.find(function(p){ return p.foodKey===foodKey && p.unit==="g"; });
-        if(stock){ stock.qty = Math.max(0, round1(stock.qty-qty)); if(stock.qty===0){ state.pantry = state.pantry.filter(function(p){ return p!==stock; }); } pantryChanged = true; }
+        var stock = state.pantry.find(function(p){ return p.foodKey===foodKey; });
+        if(stock){ deductPantryForConsumption(stock, qty); pantryChanged = true; }
       }
     }
     state.meals.push({ id: uid(), date: mealsUi.date, type: mealsUi.type, name: name, qty: qty, nutrients: nutrients, createdAt: Date.now() });
