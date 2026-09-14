@@ -139,6 +139,20 @@
   .photo-row .link-row{display:flex;align-items:center;gap:6px;padding-left:28px}
   .photo-row .link-row label{font-size:10px;color:var(--ink-3);white-space:nowrap;flex-shrink:0}
   .photo-row .link-row select{flex:1;min-width:0;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;color:inherit}
+  .cook-toggle{margin:0 0 0 28px;display:flex;gap:6px}
+  .cook-toggle button{border:1px solid var(--border);background:var(--surface);color:var(--ink-2);font-size:12px;font-weight:700;padding:5px 11px;border-radius:999px;cursor:pointer}
+  .cook-toggle button.active{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .ingredient-panel{margin-left:28px;border:1px dashed var(--border);border-radius:10px;padding:10px}
+  .ingredient-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+  .ingredient-row:last-child{margin-bottom:0}
+  .ingredient-row .ing-use{flex-shrink:0;width:15px;height:15px;accent-color:var(--accent)}
+  .ingredient-row .ing-name{flex:1.2;min-width:80px;padding:5px 7px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;color:inherit}
+  .ingredient-row .ing-qty{width:56px;flex-shrink:0;padding:5px 6px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-variant-numeric:tabular-nums;color:inherit}
+  .ingredient-row .ing-unit{font-size:11px;color:var(--ink-3);flex-shrink:0}
+  .ingredient-row .ing-link{flex:1.6;min-width:120px;padding:5px 7px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:12px;color:inherit}
+  .ingredient-row .ing-remove{flex-shrink:0;border:none;background:transparent;color:var(--ink-3);font-size:17px;line-height:1;cursor:pointer;padding:0 3px}
+  .ingredient-row .ing-remove:hover{color:var(--crit)}
+  .ing-add-btn{margin-top:2px}
 
   .totals-bar{display:flex;flex-wrap:wrap;gap:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;font-size:12.5px;color:var(--ink-2);margin-bottom:14px}
   .totals-bar b{color:var(--ink);font-variant-numeric:tabular-nums}
@@ -658,21 +672,47 @@ function geminiPhotoItemsFromResponseText(text, validPantryIds){
   var cleaned = String(text||"").trim().replace(/^```[a-zA-Z]*\n?/,"").replace(/```\s*$/,"").trim();
   var parsed = JSON.parse(cleaned);
   var arr = Array.isArray(parsed) ? parsed : (parsed && typeof parsed==="object" ? [parsed] : []);
-  return arr.slice(0,6).map(function(it){
+  return arr.slice(0,4).map(function(it){
     var estimatedGrams = Number(it.estimatedGrams)||0;
     var vegetableGrams = Number(it.vegetableGrams)||0;
-    var matchedPantryId = it.matchedPantryId && validPantryIds.indexOf(it.matchedPantryId)>=0 ? it.matchedPantryId : null;
+    var ingredients = (Array.isArray(it.ingredients) ? it.ingredients : []).slice(0,8).map(function(ing){
+      var matchedPantryId = ing.matchedPantryId && validPantryIds.indexOf(ing.matchedPantryId)>=0 ? ing.matchedPantryId : null;
+      return {
+        name: String(ing.name||"").slice(0,40),
+        estimatedGrams: Number(ing.estimatedGrams)||0,
+        matchedPantryId: matchedPantryId
+      };
+    });
     var item = {
-      name: String(it.name||"名称不明の食品").slice(0,60),
+      name: String(it.name||"名称不明の料理").slice(0,60),
       estimatedGrams: estimatedGrams,
       kcal: Number(it.kcal)||0, protein: Number(it.protein)||0, fat: Number(it.fat)||0,
       carb: Number(it.carb)||0, fiber: Number(it.fiber)||0, salt: Number(it.salt)||0,
       vegRatio: estimatedGrams>0 ? Math.max(0, Math.min(1, vegetableGrams/estimatedGrams)) : 0,
-      matchedPantryId: matchedPantryId
+      ingredients: ingredients
     };
     item.per100 = per100FromPhotoItem(item);
     return item;
   });
+}
+
+function ingredientRowHtml(ing){
+  var pantryOptions = state.pantry.length ? (
+    '<select class="ing-link">'
+    + '<option value="">紐づけない</option>'
+    + state.pantry.map(function(p){
+        return '<option value="'+p.id+'"'+(ing.matchedPantryId===p.id?" selected":"")+'>'+escapeAttr(p.name)+'（在庫'+p.qty+p.unit+'）</option>';
+      }).join("")
+    + '</select>'
+  ) : "";
+  return '<div class="ingredient-row">'
+    + '<input type="checkbox" class="ing-use" checked>'
+    + '<input type="text" class="ing-name" value="'+escapeAttr(ing.name||"")+'" placeholder="材料名">'
+    + '<input type="number" class="ing-qty" value="'+Math.round(ing.estimatedGrams||0)+'" min="0" step="1">'
+    + '<span class="ing-unit">g</span>'
+    + pantryOptions
+    + '<button type="button" class="ing-remove" title="削除">×</button>'
+    + '</div>';
 }
 
 async function runPhotoAnalysis(file){
@@ -685,12 +725,11 @@ async function runPhotoAnalysis(file){
   photoUi.status = "loading"; photoUi.items = []; photoUi.error = "";
   renderMeals();
   var pantryContext = state.pantry.map(function(p){ return { id:p.id, name:p.name }; });
-  var prompt = "あなたは栄養士です。添付した料理写真を見て、使われている主要な食材を最大6品まで識別し、それぞれの一般的な1人前の使用量を推定したうえで栄養価を概算してください。\n"
-    + "重要: 「麻婆豆腐」「カレー」のような完成料理名1つにまとめず、必ず豆腐・ひき肉・長ねぎ・カレールウ等のように使われている主要な食材ごとに分解して列挙してください（在庫の食材と突き合わせるため、食材レベルの分解が必須です）。調味料やルウなど食材と言えないものは1つの項目にまとめて構いません。\n"
+  var prompt = "あなたは栄養士です。添付した料理写真を見て、写っている料理を最大4品まで識別してください。それぞれの料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、使われている主要な食材（豆腐・肉・野菜など。調味料やルウはまとめてよい）を最大5つまでリストアップしてください。\n"
     + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
-    + '[{"name":"食品名(日本語、具体的に)","estimatedGrams":推定重量の数値(g),"kcal":その重量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"matchedPantryId":下記の在庫リストの中で同じ食材だと思われるものがあればそのid(文字列)、無ければnull}]\n'
+    + '[{"name":"料理名(日本語、具体的に。例:麻婆豆腐)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"食材名(日本語)","estimatedGrams":推定重量(g),"matchedPantryId":下記の在庫リストの中で同じ食材だと思われるものがあればそのid(文字列)、無ければnull}]}]\n'
     + "数値はすべて概算で構いません。写真から判断できる範囲で答えてください。\n"
-    + "ユーザーの現在の食材在庫（パントリー）は次の通りです。写真の食品がこの中のどれかを使って作られたものだと合理的に推測できる場合のみ、対応するidをmatchedPantryIdに入れてください。自信が無い場合や、明らかに在庫にない食品（外食・総菜・在庫にない食材など）の場合はnullにしてください。無理にマッチさせないでください。\n"
+    + "ユーザーの現在の食材在庫（パントリー）は次の通りです。各食材(ingredients)がこの中のどれかだと合理的に推測できる場合のみ、対応するidをmatchedPantryIdに入れてください。自信が無い場合や在庫にない食材の場合はnullにしてください。無理にマッチさせないでください。\n"
     + JSON.stringify(pantryContext);
 
   fileToInlineImage(file, async function(imgSource){
@@ -1446,14 +1485,17 @@ function renderMeals(){
       resultsHtml = '<div class="hint" style="margin-top:10px;color:var(--crit)">'+photoUi.error+'</div>';
     } else if(photoUi.status==="done" && photoUi.items.length){
       resultsHtml = '<div class="list" id="photoResults" style="margin-top:12px">' + photoUi.items.map(function(it, idx){
-          var linkRow = state.pantry.length ? (
-            '<div class="link-row"><label>使った在庫</label><select class="pi-link" data-idx="'+idx+'">'
-            + '<option value="">使っていない（在庫を減らさない）</option>'
-            + state.pantry.map(function(p){
-                return '<option value="'+p.id+'"'+(it.matchedPantryId===p.id?" selected":"")+'>'+escapeAttr(p.name)+'（在庫'+p.qty+p.unit+'）</option>';
-              }).join("")
-            + '</select></div>'
-            + '<div class="hint" style="padding-left:28px;margin-top:-4px">選ぶと「選択した項目を追加」を押したときにこの食材ぶん在庫が減ります'+(it.matchedPantryId?"（AIが自動選択しました。違う場合は選び直してください）":"")+'</div>'
+          var hasIngredients = it.ingredients && it.ingredients.length;
+          var cookSection = state.pantry.length ? (
+            '<div class="pill-tabs cook-toggle" style="margin-bottom:0">'
+            +   '<button type="button" class="cook-btn'+(hasIngredients?" active":"")+'" data-mode="home">🍳 自炊</button>'
+            +   '<button type="button" class="cook-btn'+(hasIngredients?"":" active")+'" data-mode="out">🍱 外食・出来合い</button>'
+            + '</div>'
+            + '<div class="ingredient-panel"'+(hasIngredients?"":" hidden")+'>'
+            +   '<div class="hint" style="margin-bottom:6px">使った材料。パントリーと紐づけると、追加時にその分だけ在庫が減ります</div>'
+            +   '<div class="ingredient-list">' + (it.ingredients||[]).map(ingredientRowHtml).join("") + '</div>'
+            +   '<button type="button" class="btn ghost small ing-add-btn">＋ 材料を追加</button>'
+            + '</div>'
           ) : "";
           return '<div class="photo-row" data-idx="'+idx+'">'
             + '<div class="photo-row-top">'
@@ -1462,7 +1504,7 @@ function renderMeals(){
             +   '<div class="meta">AI推定 '+Math.round(it.estimatedGrams)+'g ・ '+Math.round(it.kcal)+'kcal ・ P'+round1(it.protein)+' F'+round1(it.fat)+' C'+round1(it.carb)+'</div></div>'
             +   '<div class="qty"><label>実量(g)</label><input type="number" class="pi-qty" data-idx="'+idx+'" min="0" step="1" value="'+Math.round(it.estimatedGrams)+'"></div>'
             + '</div>'
-            + linkRow
+            + cookSection
             + '</div>';
         }).join("") + '</div>'
         + '<div class="form-actions" style="margin-top:10px">'
@@ -1566,6 +1608,32 @@ function renderMeals(){
       persist(["meals"]); renderAll();
     });
   }
+  if(!el.dataset.ingredientUiBound){
+    el.dataset.ingredientUiBound = "1";
+    /* dish-level cook-toggle / ingredient add-remove: plain DOM manipulation (no renderMeals())
+       so in-progress edits in other rows/inputs aren't wiped by a full re-render */
+    el.addEventListener("click", function(e){
+      var cookBtn = e.target.closest(".cook-btn");
+      if(cookBtn){
+        var group = cookBtn.closest(".cook-toggle");
+        group.querySelectorAll(".cook-btn").forEach(function(b){ b.classList.toggle("active", b===cookBtn); });
+        var panel = group.nextElementSibling;
+        if(panel && panel.classList.contains("ingredient-panel")) panel.hidden = (cookBtn.dataset.mode === "out");
+        return;
+      }
+      var removeBtn = e.target.closest(".ing-remove");
+      if(removeBtn){
+        removeBtn.closest(".ingredient-row").remove();
+        return;
+      }
+      var addBtn = e.target.closest(".ing-add-btn");
+      if(addBtn){
+        var list = addBtn.closest(".ingredient-panel").querySelector(".ingredient-list");
+        list.insertAdjacentHTML("beforeend", ingredientRowHtml({ name:"", estimatedGrams:0, matchedPantryId:null }));
+        return;
+      }
+    });
+  }
 
   var photoGoSettingsBtn = document.getElementById("photoGoSettingsBtn");
   if(photoGoSettingsBtn){
@@ -1598,11 +1666,20 @@ function renderMeals(){
         var qty = parseFloat(row.querySelector(".pi-qty").value)||0;
         var nutrients = nutrientsForPhotoItem(item, qty);
         state.meals.push({ id: uid(), date: mealsUi.date, type: mealsUi.type, name: item.name, qty: qty, nutrients: nutrients, createdAt: Date.now() });
-        var linkSel = row.querySelector(".pi-link");
-        var pantryId = linkSel ? linkSel.value : "";
-        if(pantryId){
-          var stock = state.pantry.find(function(p){ return p.id===pantryId; });
-          if(stock){ deductPantryForConsumption(stock, qty); pantryChanged = true; }
+
+        var cookBtn = row.querySelector(".cook-btn.active");
+        var isHomeCooked = cookBtn ? cookBtn.dataset.mode !== "out" : false;
+        if(isHomeCooked){
+          row.querySelectorAll(".ingredient-row").forEach(function(ingRow){
+            var use = ingRow.querySelector(".ing-use").checked;
+            if(!use) return;
+            var linkSel = ingRow.querySelector(".ing-link");
+            var pantryId = linkSel ? linkSel.value : "";
+            if(!pantryId) return;
+            var ingQty = parseFloat(ingRow.querySelector(".ing-qty").value)||0;
+            var stock = state.pantry.find(function(p){ return p.id===pantryId; });
+            if(stock){ deductPantryForConsumption(stock, ingQty); pantryChanged = true; }
+          });
         }
       });
       if(photoUi.previewUrl) URL.revokeObjectURL(photoUi.previewUrl);
