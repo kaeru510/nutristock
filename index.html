@@ -587,6 +587,12 @@ var lastSnapshotFile = null;
 var lastSnapshotCode = null;
 var DEBUG_MODE = location.search.indexOf("debug=1") !== -1;
 
+/* triggers the user's iOS Shortcut (reads today's steps from Health, then opens this
+   page again with ?steps=N — see NOTES.md "歩数の自動入力（iOSショートカット連携）").
+   The name must match the shortcut exactly as saved on the device. */
+var STEPS_SHORTCUT_NAME = "歩数をNutriStockに送る";
+var IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
 function captureSnapshot(code, cb){
   var video = document.getElementById("scannerVideo");
   if(!video || !video.videoWidth){ cb(null); return; }
@@ -1197,6 +1203,9 @@ function renderHome(){
   var kcalTile = '<div class="stat-tile"><div class="label">本日の摂取エネルギー</div><div class="value">'+Math.round(totals.kcal)+' <small>/ '+(targets?(targets.kcal+stepsExtra):"–")+' kcal</small></div></div>';
   var vegTile = '<div class="stat-tile"><div class="label">本日の野菜摂取量</div><div class="value">'+Math.round(totals.veg)+' <small>/ '+(targets?targets.veg:350)+' g</small></div></div>';
   var pantryTile = '<div class="stat-tile"><div class="label">パントリー在庫</div><div class="value">'+state.pantry.length+' <small>品目</small></div></div>';
+  var shortcutBtn = IS_IOS
+    ? '<a href="shortcuts://run-shortcut?name='+encodeURIComponent(STEPS_SHORTCUT_NAME)+'" class="btn small" style="display:inline-block;text-decoration:none;margin-top:10px">📲 ヘルスケアから今日の歩数を取得</a>'
+    : "";
   var stepsTile = '<div class="stat-tile"><div class="label">本日の歩数（プロトタイプ用シミュレータ）</div><div class="value">'+steps.toLocaleString()+' <small>歩</small></div>'
     + '<div class="step-presets" id="stepPresets">'
     +   '<button type="button" data-steps="3000">デスクワーク<span>3,000歩</span></button>'
@@ -1204,7 +1213,8 @@ function renderHome(){
     +   '<button type="button" data-steps="12000">よく歩いた<span>12,000歩</span></button>'
     + '</div>'
     + '<form id="stepsForm" class="quick-form"><input id="stepsInput" type="number" min="0" step="1" inputmode="numeric" placeholder="任意の数値" value="'+(steps||"")+'"><button type="submit" class="btn small">保存</button></form>'
-    + '<div class="note">実機のヘルスケア連携は将来のネイティブアプリ化で対応予定。今は動作確認用の簡易入力です。</div>'
+    + shortcutBtn
+    + '<div class="note">'+(IS_IOS ? '上のボタンでiOSショートカット（ヘルスケアの歩数取得）が起動します。未設定の場合は手入力してください。' : '実機のヘルスケア連携は将来のネイティブアプリ化で対応予定。今は動作確認用の簡易入力です。')+'</div>'
     + '</div>';
 
   el.innerHTML =
