@@ -2026,7 +2026,26 @@ function renderAll(){
   updatePantryTabBadge();
 }
 
+/* iOS Shortcuts bridge: a Shortcut can read today's step count from Health and open
+   this page with ?steps=N — no backend needed, since it just runs the same code path
+   as the manual step form. See NOTES.md "歩数の自動入力（iOSショートカット連携）". */
+function applyStepsFromUrl(){
+  try{
+    var params = new URLSearchParams(location.search);
+    if(!params.has("steps")) return;
+    var v = Math.max(0, Math.round(parseFloat(params.get("steps"))||0));
+    state.steps = state.steps || {};
+    state.steps[todayStr()] = v;
+    persist(["steps"]);
+    var url = new URL(location.href);
+    url.searchParams.delete("steps");
+    history.replaceState(null, "", url.toString());
+    renderAll();
+  }catch(e){}
+}
+
 initDb();
+applyStepsFromUrl();
 })();
 </script>
 
