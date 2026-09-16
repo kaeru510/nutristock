@@ -176,11 +176,6 @@
   .quick-form button{flex-shrink:0}
   .stat-tile .note{font-size:11px;color:var(--ink-3);margin-top:6px}
 
-  .step-presets{display:flex;gap:6px;margin-top:10px}
-  .step-presets button{flex:1;border:1px solid var(--border);background:var(--surface-2);color:var(--ink-2);border-radius:8px;padding:6px 4px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.5;text-align:center}
-  .step-presets button span{display:block;font-weight:400;color:var(--ink-3);font-size:10px;font-variant-numeric:tabular-nums}
-  .step-presets button:hover{border-color:var(--accent);color:var(--ink)}
-
   .scanner-overlay{position:fixed;inset:0;background:rgba(20,18,12,.62);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}
   .scanner-overlay[hidden]{display:none}
   .scanner-box{background:var(--surface);border-radius:16px;padding:14px;max-width:440px;width:100%;box-shadow:var(--shadow)}
@@ -1206,15 +1201,9 @@ function renderHome(){
   var shortcutBtn = IS_IOS
     ? '<a href="shortcuts://run-shortcut?name='+encodeURIComponent(STEPS_SHORTCUT_NAME)+'" class="btn small" style="display:inline-block;text-decoration:none;margin-top:10px">📲 ヘルスケアから今日の歩数を取得</a>'
     : "";
-  var stepsTile = '<div class="stat-tile"><div class="label">本日の歩数（プロトタイプ用シミュレータ）</div><div class="value">'+steps.toLocaleString()+' <small>歩</small></div>'
-    + '<div class="step-presets" id="stepPresets">'
-    +   '<button type="button" data-steps="3000">デスクワーク<span>3,000歩</span></button>'
-    +   '<button type="button" data-steps="7000">普通<span>7,000歩</span></button>'
-    +   '<button type="button" data-steps="12000">よく歩いた<span>12,000歩</span></button>'
-    + '</div>'
-    + '<form id="stepsForm" class="quick-form"><input id="stepsInput" type="number" min="0" step="1" inputmode="numeric" placeholder="任意の数値" value="'+(steps||"")+'"><button type="submit" class="btn small">保存</button></form>'
+  var stepsTile = '<div class="stat-tile"><div class="label">本日の歩数</div><div class="value">'+steps.toLocaleString()+' <small>歩</small></div>'
     + shortcutBtn
-    + '<div class="note">'+(IS_IOS ? '上のボタンでiOSショートカット（ヘルスケアの歩数取得）が起動します。未設定の場合は手入力してください。' : '実機のヘルスケア連携は将来のネイティブアプリ化で対応予定。今は動作確認用の簡易入力です。')+'</div>'
+    + '<div class="note">'+(IS_IOS ? '上のボタンでiOSショートカット経由でヘルスケアの歩数を取得します。' : 'iOS端末のショートカット連携でのみ歩数を記録できます。')+'</div>'
     + '</div>';
 
   el.innerHTML =
@@ -1223,21 +1212,6 @@ function renderHome(){
     + '<div class="card"><div class="card-head"><h2>栄養バランス</h2></div><div class="sub">本日 '+todayStr()+' の合計摂取量</div><div class="meters">'+metersHtml+'</div></div>'
     + suggestCard
     + '<div class="card"><div class="card-head"><h2>賞味期限が近い食材</h2></div><div class="sub">上位5件を表示</div>'+expiringHtml+'</div>';
-
-  document.getElementById("stepsForm").addEventListener("submit", function(e){
-    e.preventDefault();
-    var v = Math.max(0, Math.round(parseFloat(document.getElementById("stepsInput").value)||0));
-    state.steps = state.steps || {};
-    state.steps[todayStr()] = v;
-    persist(["steps"]); renderAll();
-  });
-  document.getElementById("stepPresets").addEventListener("click", function(e){
-    var b = e.target.closest("button[data-steps]");
-    if(!b) return;
-    state.steps = state.steps || {};
-    state.steps[todayStr()] = parseInt(b.dataset.steps, 10);
-    persist(["steps"]); renderAll();
-  });
 
   el.querySelectorAll(".suggest-log-btn").forEach(function(btn){
     btn.addEventListener("click", function(){
