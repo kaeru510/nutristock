@@ -885,8 +885,13 @@ async function generateDishImageDataUrl(promptText){
       signal: controller.signal
     });
     clearTimeout(timeoutId);
-  }catch(e){ res = null; }
+  }catch(e){
+    console.log("[NutriStock] 画像生成: fetch自体が失敗", e);
+    res = null;
+  }
   if(!res || !res.ok){
+    var errBody = res ? await res.text().catch(function(){ return ""; }) : "";
+    console.log("[NutriStock] 画像生成: レスポンスNG", res ? res.status : "(no response)", errBody);
     logGeminiUsage({ ts: Date.now(), model: GEMINI_IMAGE_MODEL, ok: false, code: "image_gen_failed" });
     return null;
   }
@@ -894,6 +899,7 @@ async function generateDishImageDataUrl(promptText){
     var data = await res.json();
     var parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
     var imgPart = (parts||[]).find(function(p){ return p.inlineData && p.inlineData.data; });
+    if(!imgPart) console.log("[NutriStock] 画像生成: 画像パートが無い。レスポンス全体:", JSON.stringify(data).slice(0,2000));
     logGeminiUsage({ ts: Date.now(), model: GEMINI_IMAGE_MODEL, ok: !!imgPart });
     if(!imgPart) return null;
     return "data:"+(imgPart.inlineData.mimeType||"image/png")+";base64,"+imgPart.inlineData.data;
