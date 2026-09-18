@@ -772,6 +772,7 @@ function geminiPhotoItemsFromResponseText(text, validPantryIds){
     var item = {
       name: String(it.name||"名称不明の料理").slice(0,60),
       reason: String(it.reason||"").slice(0,120),
+      imagePromptEn: String(it.imagePromptEn||"").slice(0,200),
       estimatedGrams: estimatedGrams,
       kcal: Number(it.kcal)||0, protein: Number(it.protein)||0, fat: Number(it.fat)||0,
       carb: Number(it.carb)||0, fiber: Number(it.fiber)||0, salt: Number(it.salt)||0,
@@ -870,8 +871,12 @@ async function callGeminiText(promptText, opts){
    Unlike everything else under "AI", this doesn't touch Gemini at all — no key needed,
    nothing to log to the Gemini usage panel. */
 async function generateDishImageDataUrl(promptText){
+  /* Pollinations returns the exact same image for the exact same prompt when no seed is
+     given (confirmed live: identical bytes on repeated identical requests) — without this,
+     tapping "🎨 再生成" would silently hand back the same picture every time */
+  var seed = Math.floor(Math.random()*1000000);
   var url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(promptText)
-    + "?width=768&height=768&nologo=true&model=flux&referrer=nutristock";
+    + "?width=768&height=768&nologo=true&model=flux&referrer=nutristock&seed=" + seed;
   for(var attempt=0; attempt<2; attempt++){
     try{
       var controller = new AbortController();
@@ -1064,9 +1069,15 @@ async function generateImageForSuggestedDish(idx){
   d.imageLoading = true;
   renderHome();
   /* Flux (the model behind Pollinations.ai) is trained mostly on English captions and
-     follows Japanese instructions noticeably worse — an English prompt with the dish's
-     Japanese name embedded as a proper noun tested far better than a fully Japanese prompt */
-  var prompt = "A professional, appetizing food photograph of a Japanese home-cooked dish called \""+d.name+"\", beautifully plated on a clean dinner table, natural lighting, realistic food photography style, no text or logos in the image.";
+     largely ignores a Japanese dish name — tested live, two completely different dishes
+     ("肉じゃが" vs "オムライス") with only the name swapped in an otherwise-identical
+     English template came back as near-identical generic bowls, neither resembling the
+     actual dish. Gemini (which already wrote the suggestion) is asked for an English
+     visual description (imagePromptEn) precisely so Flux has real content to draw from;
+     the bare-name template is only a fallback for older favorites saved before this field
+     existed. */
+  var visual = d.imagePromptEn || ("a Japanese home-cooked dish called \""+d.name+"\"");
+  var prompt = "A professional, appetizing food photograph of " + visual + ", beautifully plated on a clean dinner table, natural lighting, realistic food photography style, no text or logos in the image.";
   var url = await generateDishImageDataUrl(prompt);
   d.imageLoading = false;
   d.imageDataUrl = url;
@@ -1096,7 +1107,7 @@ async function runAiSuggestions(){
     + "この在庫を使って作れる具体的な料理を最大4つ提案してください。特に賞味期限が近い食材を優先的に使う組み合わせを考えてください。\n"
     + "各料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、実際にその料理を作るのに必要な主要な材料（調味料も含めてよい）を挙げ、それぞれが上記在庫の中にあるかどうか判定してください。\n"
     + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
-    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}]}]\n'
+    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(色・主な材料・盛り付け方・器の種類など。画像生成AIへの指示文として使うため、料理名の日本語表記に頼らず英語だけで見た目が伝わるように書くこと。例:\"a bowl of simmered beef and potatoes in sweet soy sauce, glossy brown sauce, orange carrots, dark bowl\")","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}]}]\n'
     + "数値はすべて概算で構いません。在庫だけで無理に完結させず、一般的なレシピとして自然な材料を挙げてください（在庫に無い調味料等が混ざるのは自然です）。ただし主役の食材はできるだけ在庫にあるものを使ってください。";
 
   var result = await callGeminiText(prompt, { maxOutputTokens: 1500 });
