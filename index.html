@@ -1063,7 +1063,10 @@ async function generateImageForSuggestedDish(idx){
   if(!d || d.imageLoading) return;
   d.imageLoading = true;
   renderHome();
-  var prompt = "日本の家庭料理「"+d.name+"」の、実際に美味しそうな一皿の写真のような画像を生成してください。清潔な食卓の上に盛り付けられた、リアルな食品写真のスタイルでお願いします。文字やロゴは入れないでください。";
+  /* Flux (the model behind Pollinations.ai) is trained mostly on English captions and
+     follows Japanese instructions noticeably worse — an English prompt with the dish's
+     Japanese name embedded as a proper noun tested far better than a fully Japanese prompt */
+  var prompt = "A professional, appetizing food photograph of a Japanese home-cooked dish called \""+d.name+"\", beautifully plated on a clean dinner table, natural lighting, realistic food photography style, no text or logos in the image.";
   var url = await generateDishImageDataUrl(prompt);
   d.imageLoading = false;
   d.imageDataUrl = url;
