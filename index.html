@@ -316,7 +316,7 @@ var PROTEIN_GOAL_OPTIONS = [
 
 /* ---------- state ---------- */
 function defaultState(){
-  return { profile:null, targets:null, pantry:[], meals:[], steps:{}, barcodes:{}, shoppingList:[], recentFoods:[] };
+  return { profile:null, targets:null, pantry:[], meals:[], steps:{}, weights:{}, barcodes:{}, shoppingList:[], recentFoods:[] };
 }
 /* db snapshots deliver frozen data — deep-clone before merging into mutable local state */
 function deepClone(o){ return JSON.parse(JSON.stringify(o)); }
@@ -1068,6 +1068,25 @@ function calcTargets(profile){
   var fiber = profile.sex==="male" ? 21 : 18;
   var salt = profile.sex==="male" ? 7.5 : 6.5;
   return {kcal:kcal, protein:protein, fat:fat, carb:carb, fiber:fiber, salt:salt, veg:350};
+}
+
+/* recent weight-change trend, for display only — targets are recalculated from the latest
+   logged weight (calcTargets), not from this trend, so there's no invented "adaptive macro"
+   formula here, just an honest before/after comparison over whatever history exists */
+function weightTrend(){
+  var dates = Object.keys(state.weights||{}).sort();
+  if(dates.length < 2) return null;
+  var latestDate = dates[dates.length - 1];
+  var latest = state.weights[latestDate];
+  var cutoff = new Date(latestDate+"T00:00:00").getTime() - 7*86400000;
+  var past = null, pastDate = null;
+  for(var i=0;i<dates.length;i++){
+    if(new Date(dates[i]+"T00:00:00").getTime() <= cutoff){ pastDate = dates[i]; past = state.weights[dates[i]]; }
+  }
+  if(past===null){ pastDate = dates[0]; past = state.weights[pastDate]; }
+  if(pastDate===latestDate) return null;
+  var days = Math.round((new Date(latestDate+"T00:00:00") - new Date(pastDate+"T00:00:00"))/86400000);
+  return { latest: latest, delta: round1(latest-past), days: days };
 }
 
 /* ---------- nutrient totals ---------- */
@@ -2240,6 +2259,15 @@ function renderSettings(){
     +   '<div class="form-actions"><button type="submit" class="btn">目標を計算して保存</button></div>'
     + '</form>'
     + '</div>'
+    + (function(){
+        var trend = weightTrend();
+        var latestDate = Object.keys(state.weights||{}).sort().slice(-1)[0];
+        var latestWeight = latestDate ? state.weights[latestDate] : p.weight;
+        return '<div class="card"><div class="card-head"><h2>体重ログ</h2></div><div class="sub">記録すると、この体重をもとに栄養目標も自動で再計算されます</div>'
+          + '<form id="weightForm" class="quick-form"><input id="weightInput" type="number" min="20" max="300" step="0.1" inputmode="decimal" placeholder="例：65.0" value="'+(latestWeight||"")+'"><button type="submit" class="btn small">記録</button></form>'
+          + (trend ? '<div class="note" style="margin-top:8px">直近'+trend.days+'日間で '+(trend.delta>0?"+":"")+trend.delta+'kg（'+latestWeight+'kg）</div>' : (latestDate ? '<div class="note" style="margin-top:8px">最終記録：'+latestDate+'（'+latestWeight+'kg）</div>' : ''))
+          + '</div>';
+      })()
     + (t ? (
       '<div class="card"><div class="card-head"><h2>現在の栄養目標</h2></div><div class="sub">1日あたり・必要に応じて数値を直接調整できます</div>'
       + '<form id="targetForm" class="inline"><div class="field-row">'
@@ -2289,6 +2317,24 @@ function renderSettings(){
     state.targets = calcTargets(profile);
     persist(["profile","targets"]); renderAll();
   });
+
+  var weightForm = document.getElementById("weightForm");
+  if(weightForm){
+    weightForm.addEventListener("submit", function(e){
+      e.preventDefault();
+      var v = parseFloat(document.getElementById("weightInput").value);
+      if(!v || v<=0) return;
+      state.weights = state.weights || {};
+      state.weights[todayStr()] = v;
+      var changedFields = ["weights"];
+      if(state.profile){
+        state.profile = Object.assign({}, state.profile, { weight: v });
+        state.targets = calcTargets(state.profile);
+        changedFields.push("profile", "targets");
+      }
+      persist(changedFields); renderAll();
+    });
+  }
 
   var tf = document.getElementById("targetForm");
   if(tf){
