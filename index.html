@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NutriStock</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#2F6F5E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NutriStock">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -207,7 +214,10 @@
       <h1>NutriStock</h1>
       <span class="tagline">栄養バランス × 食材ロスゼロ</span>
     </div>
-    <div class="today" id="todayLabel"></div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="today" id="todayLabel"></div>
+      <button type="button" id="themeToggleBtn" class="btn ghost small" title="ダークモード切替" style="font-size:16px;padding:4px 8px">🌙</button>
+    </div>
   </header>
 
   <nav class="tabs" id="tabs">
@@ -1688,7 +1698,7 @@ function renderPantry(){
 
   var shoppingHtml =
     '<div class="card">'
-    + '<div class="card-head"><h2>🛒 次に買うものリスト</h2></div><div class="sub">使い切った食材が自動で追加されます</div>'
+    + '<div class="card-head"><h2>🛒 次に買うものリスト</h2>'+(state.shoppingList.length && navigator.share ? '<button type="button" id="shoppingShareBtn" class="btn ghost small">📤 共有</button>' : '')+'</div><div class="sub">使い切った食材が自動で追加されます</div>'
     + '<form id="shoppingForm" class="quick-form" style="margin-top:0"><input type="text" id="shoppingInput" placeholder="買うものを追加"><button type="submit" class="btn small">追加</button></form>'
     + (state.shoppingList.length
         ? '<div class="list" style="margin-top:12px">' + state.shoppingList.map(function(s){
@@ -1781,6 +1791,13 @@ function renderPantry(){
     input.value = "";
     persist(["shoppingList"]); renderAll();
   });
+  var shoppingShareBtn = document.getElementById("shoppingShareBtn");
+  if(shoppingShareBtn){
+    shoppingShareBtn.addEventListener("click", function(){
+      var text = "買い物リスト（NutriStock）\n" + state.shoppingList.map(function(s){ return "・"+s.name; }).join("\n");
+      navigator.share({ title: "買い物リスト", text: text }).catch(function(){});
+    });
+  }
   if(!el.dataset.shoppingBound){
     el.dataset.shoppingBound = "1";
     el.addEventListener("click", function(e){
@@ -2454,6 +2471,28 @@ function applyStepsFromUrl(){
     renderAll();
   }catch(e){}
 }
+
+/* ---------- theme toggle ---------- */
+function effectiveTheme(){
+  var stored = null;
+  try{ stored = localStorage.getItem("nutristock_theme"); }catch(e){}
+  if(stored==="light" || stored==="dark") return stored;
+  return (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+}
+function applyTheme(){
+  var stored = null;
+  try{ stored = localStorage.getItem("nutristock_theme"); }catch(e){}
+  if(stored==="light" || stored==="dark"){ document.documentElement.dataset.theme = stored; }
+  else { delete document.documentElement.dataset.theme; }
+  var btn = document.getElementById("themeToggleBtn");
+  if(btn) btn.textContent = effectiveTheme()==="dark" ? "☀️" : "🌙";
+}
+document.getElementById("themeToggleBtn").addEventListener("click", function(){
+  var next = effectiveTheme()==="dark" ? "light" : "dark";
+  try{ localStorage.setItem("nutristock_theme", next); }catch(e){}
+  applyTheme();
+});
+applyTheme();
 
 initDb();
 applyStepsFromUrl();
