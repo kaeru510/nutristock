@@ -160,6 +160,12 @@
   .ingredient-row .ing-remove{flex-shrink:0;border:none;background:transparent;color:var(--ink-3);font-size:17px;line-height:1;cursor:pointer;padding:0 3px}
   .ingredient-row .ing-remove:hover{color:var(--crit)}
   .ing-add-btn{margin-top:2px}
+  .receipt-row{border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:var(--surface);margin-bottom:8px}
+  .receipt-row-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .receipt-row-top .ri-use{flex-shrink:0;width:16px;height:16px;accent-color:var(--accent)}
+  .receipt-row-top .ri-name{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px;font-weight:700;color:inherit}
+  .receipt-row-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:6px;padding-left:26px}
+  .receipt-row-fields select,.receipt-row-fields input{padding:6px 8px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;color:inherit}
 
   .totals-bar{display:flex;flex-wrap:wrap;gap:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;font-size:12.5px;color:var(--ink-2);margin-bottom:14px}
   .totals-bar b{color:var(--ink);font-variant-numeric:tabular-nums}
@@ -405,6 +411,7 @@ try{ geminiApiKey = localStorage.getItem("nutristock_geminiApiKey") || ""; }catc
 function hasGeminiKey(){ return !!geminiApiKey; }
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 var aiSuggestUi = { status:"idle", dishes:[], error:"" };
+var receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 
 /* ---------- local usage log (NOT Google's official quota — just what this app itself has sent) ---------- */
 var GEMINI_USAGE_LOG_MAX = 200;
@@ -910,6 +917,76 @@ async function runAiSuggestions(){
     aiSuggestUi.error = PHOTO_ERROR_MESSAGES.invalid_json;
   }
   renderHome();
+}
+
+var RECEIPT_VALID_UNITS = ["g","ml","個","パック","本","枚","その他"];
+function receiptRowHtml(it, idx){
+  var catOptions = Object.keys(CAT_LABEL).map(function(k){ return '<option value="'+k+'"'+(it.category===k?" selected":"")+'>'+CAT_LABEL[k]+'</option>'; }).join("");
+  var unitOptions = RECEIPT_VALID_UNITS.map(function(u){ return '<option value="'+u+'"'+(it.unit===u?" selected":"")+'>'+u+'</option>'; }).join("");
+  return '<div class="receipt-row" data-idx="'+idx+'">'
+    + '<div class="receipt-row-top">'
+    +   '<input type="checkbox" class="ri-use" checked>'
+    +   '<input type="text" class="ri-name" value="'+escapeAttr(it.name)+'" placeholder="商品名">'
+    + '</div>'
+    + '<div class="receipt-row-fields">'
+    +   '<select class="ri-cat">'+catOptions+'</select>'
+    +   '<input type="number" class="ri-qty" min="0" step="0.1" value="'+it.qty+'">'
+    +   '<select class="ri-unit">'+unitOptions+'</select>'
+    +   '<input type="date" class="ri-expiry" value="'+it.expiry+'">'
+    + '</div>'
+    + '</div>';
+}
+
+/* AI reads a photographed receipt and lists the food items on it, guessing a category,
+   a household-scale quantity/unit, and an expiry date from typical shelf life — all
+   editable before the viewer actually adds them to the pantry. */
+async function runReceiptAnalysis(file){
+  if(!hasGeminiKey()){
+    receiptUi.status = "error";
+    receiptUi.error = "設定タブでGemini APIキーを登録してください。";
+    renderPantry();
+    return;
+  }
+  receiptUi.status = "loading"; receiptUi.items = []; receiptUi.error = "";
+  renderPantry();
+  var prompt = "あなたはスーパーのレシートを読み取るアシスタントです。添付したレシート画像から、購入した食品だけを最大20件までリストアップしてください。税金・割引・ポイント・レジ袋・非食品などの行は無視してください。\n"
+    + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
+    + '[{"name":"商品名(日本語。レシートの表記を分かりやすく整えてよい)","category":"次のいずれか: meat,fish,egg_dairy,soy,veg,grain,fruit,season,other","estimatedQty":一般的な家庭用の数量(数値),"unit":"g,ml,個,パック,本,枚のいずれか","expiryDays":この食品の一般的な賞味/消費期限までの目安日数(整数)}]\n'
+    + "数量・単位は実用的な形にしてください（例：卵はパック単位で1、鶏肉は推定グラム数など）。";
+
+  fileToInlineImage(file, async function(imgSource){
+    if(!imgSource || !imgSource.data){
+      receiptUi.status = "error"; receiptUi.error = PHOTO_ERROR_MESSAGES.read_failed; renderPantry(); return;
+    }
+    var result = await callGeminiText(prompt, { image: imgSource, maxOutputTokens: 2000 });
+    if(!result.ok){
+      receiptUi.status = "error"; receiptUi.error = PHOTO_ERROR_MESSAGES[result.code] || PHOTO_ERROR_MESSAGES.network_error; renderPantry(); return;
+    }
+    try{
+      var arr = parseGeminiJsonArray(result.text);
+      receiptUi.items = arr.slice(0,20).map(function(it){
+        var cat = CAT_LABEL[it.category] ? it.category : "other";
+        var unit = RECEIPT_VALID_UNITS.indexOf(it.unit)>=0 ? it.unit : "個";
+        var expiryDays = Number(it.expiryDays);
+        if(!isFinite(expiryDays) || expiryDays<0) expiryDays = 4;
+        var expiryDate = new Date(Date.now() + expiryDays*86400000);
+        var expiry = expiryDate.getFullYear()+"-"+String(expiryDate.getMonth()+1).padStart(2,"0")+"-"+String(expiryDate.getDate()).padStart(2,"0");
+        return {
+          name: String(it.name||"").slice(0,40),
+          category: cat,
+          qty: Number(it.estimatedQty)>0 ? Number(it.estimatedQty) : 1,
+          unit: unit,
+          expiry: expiry
+        };
+      }).filter(function(it){ return it.name; });
+      receiptUi.status = receiptUi.items.length ? "done" : "error";
+      if(!receiptUi.items.length) receiptUi.error = "商品を認識できませんでした。もう一度お試しください。";
+    }catch(e){
+      receiptUi.status = "error";
+      receiptUi.error = PHOTO_ERROR_MESSAGES.invalid_json;
+    }
+    renderPantry();
+  });
 }
 
 /* ---------- targets ---------- */
@@ -1447,6 +1524,37 @@ function renderPantry(){
       + '</div></div>'
     : '';
 
+  var receiptCard = "";
+  if(!hasGeminiKey()){
+    receiptCard = '<div class="card">'
+      + '<div class="card-head"><h2>🧾 レシートから一括登録</h2></div>'
+      + '<div class="sub" style="margin-bottom:0">この機能を使うには、設定タブでGemini APIキーを登録してください。</div>'
+      + '<div class="form-actions" style="justify-content:flex-start;margin-top:10px"><button type="button" id="receiptGoSettingsBtn" class="btn secondary small">設定タブを開く</button></div>'
+      + '</div>';
+  } else {
+    var receiptBody = "";
+    if(receiptUi.status==="loading"){
+      receiptBody = '<div class="hint" style="margin-top:10px">レシートを解析中…（5〜30秒ほどかかります）</div>';
+    } else if(receiptUi.status==="error"){
+      receiptBody = '<div class="hint" style="margin-top:10px;color:var(--crit)">'+receiptUi.error+'</div>';
+    } else if(receiptUi.status==="done" && receiptUi.items.length){
+      receiptBody = '<div style="margin-top:12px">' + receiptUi.items.map(receiptRowHtml).join("") + '</div>'
+        + '<div class="form-actions" style="margin-top:2px">'
+        +   '<button type="button" id="receiptCancelBtn" class="btn ghost small">破棄</button>'
+        +   '<button type="button" id="receiptAddBtn" class="btn small">選択した項目をパントリーに追加</button>'
+        + '</div>';
+    }
+    receiptCard = '<div class="card">'
+      + '<div class="card-head"><h2>🧾 レシートから一括登録</h2></div><div class="sub">レシートを1枚撮るだけで、購入した食品をまとめてパントリーに登録します</div>'
+      + '<div class="photo-picker">'
+      +   '<label for="receiptInput" class="btn secondary small" style="cursor:pointer">'+(receiptUi.file?"写真を変更":"レシート写真を選択")+'</label>'
+      +   '<input id="receiptInput" type="file" accept="image/*" capture="environment" style="display:none">'
+      +   (receiptUi.previewUrl ? '<img class="photo-preview" src="'+receiptUi.previewUrl+'">' : '')
+      + '</div>'
+      + receiptBody
+      + '</div>';
+  }
+
   var shoppingHtml =
     '<div class="card">'
     + '<div class="card-head"><h2>🛒 次に買うものリスト</h2></div><div class="sub">使い切った食材が自動で追加されます</div>'
@@ -1480,6 +1588,7 @@ function renderPantry(){
     +   '<div class="form-actions"><button type="submit" class="btn">パントリーに追加</button></div>'
     + '</form>'
     + '</div>'
+    + receiptCard
     + shoppingHtml
     + expiredHtml
     + '<div class="card"><div class="card-head"><h2>在庫一覧</h2></div><div class="sub">'+activeList.length+' 品目 ・ 期限が近い順</div>'+filterHtml+listHtml+'</div>';
@@ -1656,6 +1765,73 @@ function renderPantry(){
       state.pantry = state.pantry.filter(function(p){ return p.id!==btn.dataset.id; });
       if(consumed) addToShoppingList(consumed.name);
       persist(["pantry","shoppingList"]); renderAll();
+    });
+  }
+
+  var receiptGoSettingsBtn = document.getElementById("receiptGoSettingsBtn");
+  if(receiptGoSettingsBtn){
+    receiptGoSettingsBtn.addEventListener("click", function(){
+      var settingsTabBtn = document.querySelector('nav.tabs button[data-tab="settings"]');
+      if(settingsTabBtn) settingsTabBtn.click();
+    });
+  }
+  var receiptInputEl = document.getElementById("receiptInput");
+  if(receiptInputEl){
+    receiptInputEl.addEventListener("change", function(){
+      var file = this.files && this.files[0];
+      if(!file) return;
+      if(receiptUi.previewUrl) URL.revokeObjectURL(receiptUi.previewUrl);
+      receiptUi.file = file;
+      receiptUi.previewUrl = URL.createObjectURL(file);
+      runReceiptAnalysis(file);
+    });
+  }
+  var receiptCancelBtn = document.getElementById("receiptCancelBtn");
+  if(receiptCancelBtn){
+    receiptCancelBtn.addEventListener("click", function(){
+      if(receiptUi.previewUrl) URL.revokeObjectURL(receiptUi.previewUrl);
+      receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
+      renderPantry();
+    });
+  }
+  var receiptAddBtn = document.getElementById("receiptAddBtn");
+  if(receiptAddBtn){
+    receiptAddBtn.addEventListener("click", function(){
+      var rows = el.querySelectorAll(".receipt-row");
+      rows.forEach(function(row){
+        var use = row.querySelector(".ri-use").checked;
+        if(!use) return;
+        var name = (row.querySelector(".ri-name").value||"").trim();
+        if(!name) return;
+        var cat = row.querySelector(".ri-cat").value;
+        var qty = parseFloat(row.querySelector(".ri-qty").value)||0;
+        var unit = row.querySelector(".ri-unit").value;
+        var expiry = row.querySelector(".ri-expiry").value;
+        if(!expiry) return;
+        var mergeTarget = state.pantry.find(function(p){ return !p.foodKey && p.name===name && p.expiry===expiry; });
+        var pushedItem = null;
+        if(mergeTarget){
+          mergeTarget.qty = round1(mergeTarget.qty + qty);
+        } else {
+          pushedItem = { id: uid(), name: name, foodKey: null, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: null, addedAt: Date.now() };
+          state.pantry.push(pushedItem);
+        }
+        pushRecentFood({ name: name, foodKey: null, unit: unit, category: cat });
+        state.shoppingList = state.shoppingList.filter(function(s){ return s.name !== name; });
+        var iconTarget = mergeTarget || pushedItem;
+        if(iconTarget && !iconTarget.icon){
+          guessFoodIcon(name).then(function(emoji){
+            if(!emoji) return;
+            var stillThere = state.pantry.find(function(p){ return p.id===iconTarget.id; });
+            if(!stillThere) return;
+            stillThere.icon = emoji;
+            persist(["pantry"]); renderAll();
+          });
+        }
+      });
+      if(receiptUi.previewUrl) URL.revokeObjectURL(receiptUi.previewUrl);
+      receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
+      persist(["pantry","recentFoods","shoppingList"]); renderAll();
     });
   }
 }
