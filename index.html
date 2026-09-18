@@ -1147,6 +1147,24 @@ function mealTypeMeters(totals){
   }).join("");
 }
 
+/* a simple 0-100 "how healthy does this pantry look right now" score — client-side only,
+   no AI needed. 60pt for freshness (expired/expiring-soon items drag it down), 40pt for
+   whether a protein source, a vegetable, and a grain are all currently in stock. */
+function pantryHealthScore(){
+  var pantry = state.pantry;
+  if(!pantry.length) return null;
+  var expired = pantry.filter(function(p){ return daysUntil(p.expiry) < 0; }).length;
+  var expiringSoon = pantry.filter(function(p){ var d=daysUntil(p.expiry); return d>=0 && d<=2; }).length;
+  var freshPenalty = expired*2 + expiringSoon;
+  var freshRatio = Math.max(0, 1 - freshPenalty/pantry.length);
+  var hasProtein = pantry.some(function(p){ return p.category==="meat"||p.category==="fish"||p.category==="egg_dairy"||p.category==="soy"; });
+  var hasVeg = pantry.some(function(p){ return p.category==="veg"; });
+  var hasGrain = pantry.some(function(p){ return p.category==="grain"; });
+  var varietyCount = [hasProtein, hasVeg, hasGrain].filter(Boolean).length;
+  var score = Math.round(freshRatio*60) + Math.round(varietyCount/3*40);
+  return { score: score, expired: expired, expiringSoon: expiringSoon, hasProtein: hasProtein, hasVeg: hasVeg, hasGrain: hasGrain };
+}
+
 function renderHome(){
   var el = document.getElementById("panel-home");
   var targets = state.targets;
@@ -1222,6 +1240,20 @@ function renderHome(){
   var kcalTile = '<div class="stat-tile"><div class="label">本日の摂取エネルギー</div><div class="value">'+Math.round(totals.kcal)+' <small>/ '+(targets?(targets.kcal+stepsExtra):"–")+' kcal</small></div></div>';
   var vegTile = '<div class="stat-tile"><div class="label">本日の野菜摂取量</div><div class="value">'+Math.round(totals.veg)+' <small>/ '+(targets?targets.veg:350)+' g</small></div></div>';
   var pantryTile = '<div class="stat-tile"><div class="label">パントリー在庫</div><div class="value">'+state.pantry.length+' <small>品目</small></div></div>';
+  var health = pantryHealthScore();
+  var healthTile = health ? (function(){
+      var cls = health.score>=80 ? "good" : health.score>=50 ? "warn" : "crit";
+      var label = health.score>=80 ? "良好" : health.score>=50 ? "普通" : "要改善";
+      var missing = [];
+      if(!health.hasProtein) missing.push("肉・魚・卵・大豆製品");
+      if(!health.hasVeg) missing.push("野菜");
+      if(!health.hasGrain) missing.push("穀物");
+      var note = "";
+      if(health.expired || health.expiringSoon) note = '<div class="note">期限切れ'+health.expired+'件・期限間近'+health.expiringSoon+'件</div>';
+      else if(missing.length) note = '<div class="note">'+missing.join("・")+'が在庫にありません</div>';
+      return '<div class="stat-tile"><div class="label">パントリー健康度</div><div class="value">'+health.score+' <small>/ 100</small></div><span class="badge '+cls+'">'+label+'</span>'+note+'</div>';
+    })()
+    : '<div class="stat-tile"><div class="label">パントリー健康度</div><div class="value">– <small>在庫なし</small></div></div>';
   var shortcutBtn = IS_IOS
     ? '<a href="shortcuts://run-shortcut?name='+encodeURIComponent(STEPS_SHORTCUT_NAME)+'" class="btn small" style="display:inline-block;text-decoration:none;margin-top:10px">📲 ヘルスケアから今日の歩数を取得</a>'
     : "";
@@ -1231,7 +1263,7 @@ function renderHome(){
     + '</div>';
 
   el.innerHTML =
-    '<div class="stat-row">'+kcalTile+vegTile+stepsTile+pantryTile+'</div>'
+    '<div class="stat-row">'+kcalTile+vegTile+stepsTile+pantryTile+healthTile+'</div>'
     + (targets ? '' : '<div class="card"><div class="suggest-card"><div class="ic">⚙️</div><div><div class="t">目標値が未設定です</div><div class="d">「設定」タブでプロフィールを入力すると、栄養目標を自動計算します。</div></div></div></div>')
     + '<div class="card"><div class="card-head"><h2>栄養バランス</h2></div><div class="sub">本日 '+todayStr()+' の合計摂取量</div><div class="meters">'+metersHtml+'</div></div>'
     + suggestCard
@@ -1253,7 +1285,7 @@ function renderHome(){
           pantryChanged = true;
         }
       });
-      persist(pantryChanged ? ["meals","pantry"] : ["meals"]);
+      persist(pantryChanged ? ["meals","pantry","shoppingList"] : ["meals"]);
       renderAll();
     });
   });
@@ -1273,7 +1305,7 @@ function renderHome(){
         if(stock){ deductPantryForConsumption(stock, ing.estimatedGrams); pantryChanged = true; }
       });
       state.meals.push({ id: uid(), date: todayStr(), type: "dinner", name: d.name, qty: d.estimatedGrams, nutrients: nutrients, createdAt: Date.now(), cookMode: "home", ingredients: d.ingredients||[] });
-      persist(pantryChanged ? ["meals","pantry"] : ["meals"]);
+      persist(pantryChanged ? ["meals","pantry","shoppingList"] : ["meals"]);
       renderAll();
     });
   });
@@ -1314,11 +1346,18 @@ function pushRecentFood(entry){
   state.recentFoods.unshift(entry);
   if(state.recentFoods.length > 8) state.recentFoods.length = 8;
 }
+/* nudge the shopping list once a count-based item is down to its last unit, not only after
+   it's fully gone — g/ml units have no reliable "running low" threshold, so skip those */
+function addToShoppingListIfLow(item){
+  if(!item || item.unit==="g" || item.unit==="ml") return;
+  if(item.qty <= 1) addToShoppingList(item.name);
+}
 /* g/ml stock is reduced by the estimated amount actually used; count-based units
    (個・パック・本・枚・その他) have no reliable gram equivalent, so treat one use as -1 */
 function deductPantryForConsumption(stock, estimatedGrams){
   var amount = (stock.unit==="g" || stock.unit==="ml") ? estimatedGrams : 1;
   stock.qty = Math.max(0, round1(stock.qty - amount));
+  addToShoppingListIfLow(stock);
   if(stock.qty === 0){ state.pantry = state.pantry.filter(function(p){ return p !== stock; }); }
 }
 
@@ -1603,9 +1642,9 @@ function renderPantry(){
         var item = state.pantry.find(function(p){ return p.id===minusBtn.dataset.id; });
         if(item){
           item.qty = round1(item.qty - 1);
+          addToShoppingListIfLow(item);
           if(item.qty <= 0){
             state.pantry = state.pantry.filter(function(p){ return p.id!==item.id; });
-            addToShoppingList(item.name);
           }
         }
         persist(["pantry","shoppingList"]); renderAll();
@@ -1788,7 +1827,7 @@ function renderMeals(){
       }
     }
     state.meals.push({ id: uid(), date: mealsUi.date, type: mealsUi.type, name: name, qty: qty, nutrients: nutrients, createdAt: Date.now() });
-    persist(pantryChanged ? ["meals","pantry"] : ["meals"]); renderAll();
+    persist(pantryChanged ? ["meals","pantry","shoppingList"] : ["meals"]); renderAll();
   });
   if(!el.dataset.mealDelBound){
     el.dataset.mealDelBound = "1";
@@ -1880,7 +1919,7 @@ function renderMeals(){
       });
       if(photoUi.previewUrl) URL.revokeObjectURL(photoUi.previewUrl);
       photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
-      persist(pantryChanged ? ["meals","pantry"] : ["meals"]); renderAll();
+      persist(pantryChanged ? ["meals","pantry","shoppingList"] : ["meals"]); renderAll();
     });
   }
   var photoCancelBtn = document.getElementById("photoCancelBtn");
