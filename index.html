@@ -618,6 +618,8 @@ var DEBUG_MODE = location.search.indexOf("debug=1") !== -1;
    The name must match the shortcut exactly as saved on the device. */
 var STEPS_SHORTCUT_NAME = "歩数をNutriStockに送る";
 var IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+var SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+var voiceUi = { listening: false };
 
 function captureSnapshot(code, cb){
   var video = document.getElementById("scannerVideo");
@@ -852,6 +854,71 @@ async function runPhotoAnalysis(file){
     }
     renderMeals();
   });
+}
+
+/* speech-to-text version of runPhotoAnalysis — same dish+ingredients JSON schema, same
+   photoUi state and review UI, just starting from a spoken description instead of a photo */
+async function runVoiceAnalysis(transcript){
+  if(!hasGeminiKey()){
+    photoUi.status = "error";
+    photoUi.error = "設定タブでGemini APIキーを登録してください。";
+    renderMeals();
+    return;
+  }
+  photoUi.status = "loading"; photoUi.items = []; photoUi.error = "";
+  renderMeals();
+  var pantryContext = state.pantry.map(function(p){ return { id:p.id, name:p.name }; });
+  var prompt = "あなたは栄養士です。ユーザーが音声で伝えた食事内容から、食べた料理を最大4品まで識別してください。ユーザーの発言:「"+transcript+"」\n"
+    + "それぞれの料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、使われている主要な食材（豆腐・肉・野菜など。調味料やルウはまとめてよい）を最大5つまでリストアップしてください。\n"
+    + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
+    + '[{"name":"料理名(日本語、具体的に。例:麻婆豆腐)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"食材名(日本語)","estimatedGrams":推定重量(g),"matchedPantryId":下記の在庫リストの中で同じ食材だと思われるものがあればそのid(文字列)、無ければnull}]}]\n'
+    + "数値はすべて概算で構いません。発言から判断できる範囲で答えてください。\n"
+    + "ユーザーの現在の食材在庫（パントリー）は次の通りです。各食材(ingredients)がこの中のどれかだと合理的に推測できる場合のみ、対応するidをmatchedPantryIdに入れてください。自信が無い場合や在庫にない食材の場合はnullにしてください。無理にマッチさせないでください。\n"
+    + JSON.stringify(pantryContext);
+
+  var result = await callGeminiText(prompt, { maxOutputTokens: 1024 });
+  if(!result.ok){
+    photoUi.status = "error"; photoUi.error = PHOTO_ERROR_MESSAGES[result.code] || PHOTO_ERROR_MESSAGES.network_error; renderMeals(); return;
+  }
+  try{
+    var validPantryIds = state.pantry.map(function(p){ return p.id; });
+    photoUi.items = geminiPhotoItemsFromResponseText(result.text, validPantryIds);
+    photoUi.status = photoUi.items.length ? "done" : "error";
+    if(!photoUi.items.length) photoUi.error = "料理を認識できませんでした。もう一度お試しください。";
+  }catch(e){
+    photoUi.status = "error";
+    photoUi.error = PHOTO_ERROR_MESSAGES.invalid_json;
+  }
+  renderMeals();
+}
+
+function startVoiceRecording(){
+  if(!SpeechRecognitionCtor || voiceUi.listening) return;
+  var recognition = new SpeechRecognitionCtor();
+  recognition.lang = "ja-JP";
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  voiceUi.listening = true;
+  var btn = document.getElementById("voiceRecordBtn");
+  if(btn){ btn.textContent = "🎙️ 聞き取り中…（話し終えたら自動で止まります）"; btn.disabled = true; }
+  recognition.onresult = function(e){
+    var transcript = e.results[0][0].transcript;
+    voiceUi.listening = false;
+    runVoiceAnalysis(transcript);
+  };
+  recognition.onerror = function(e){
+    voiceUi.listening = false;
+    photoUi.status = "error";
+    photoUi.error = e && e.error==="not-allowed" ? "マイクの権限が許可されていません。" : "音声を認識できませんでした。もう一度お試しください。";
+    renderMeals();
+  };
+  recognition.onend = function(){
+    voiceUi.listening = false;
+    var b = document.getElementById("voiceRecordBtn");
+    if(b && photoUi.status!=="loading"){ b.textContent = "🎤 音声で記録"; b.disabled = false; }
+  };
+  try{ recognition.start(); }catch(e){ voiceUi.listening = false; }
 }
 
 /* best-effort emoji icon for pantry items that have no FOOD_DB match (barcode/custom entries).
@@ -1922,6 +1989,7 @@ function renderMeals(){
       + '<div class="photo-picker">'
       +   '<label for="photoInput" class="btn secondary small" style="cursor:pointer">'+pickerLabel+'</label>'
       +   '<input id="photoInput" type="file" accept="'+accept+'" capture="environment" style="display:none">'
+      +   (SpeechRecognitionCtor ? '<button type="button" id="voiceRecordBtn" class="btn secondary small">🎤 音声で記録</button>' : '')
       +   (photoUi.previewUrl ? '<img class="photo-preview" src="'+photoUi.previewUrl+'">' : '')
       + '</div>'
       + resultsHtml
@@ -2058,6 +2126,8 @@ function renderMeals(){
       runPhotoAnalysis(file);
     });
   }
+  var voiceRecordBtn = document.getElementById("voiceRecordBtn");
+  if(voiceRecordBtn) voiceRecordBtn.addEventListener("click", startVoiceRecording);
   var photoAddBtn = document.getElementById("photoAddBtn");
   if(photoAddBtn){
     photoAddBtn.addEventListener("click", function(){
