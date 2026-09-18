@@ -419,11 +419,10 @@ try{ geminiModel = localStorage.getItem("nutristock_geminiModel") || GEMINI_MODE
 var geminiApiKey = "";
 try{ geminiApiKey = localStorage.getItem("nutristock_geminiApiKey") || ""; }catch(e){}
 function hasGeminiKey(){ return !!geminiApiKey; }
-/* opt-in — image generation is slower/costlier than text, so it stays off by default and
-   only ever runs when the viewer explicitly taps a per-dish "generate image" button */
+/* opt-in — off by default, only ever runs when the viewer explicitly taps a per-dish
+   "generate image" button. Uses Pollinations.ai (free, no key), not Gemini. */
 var imageGenEnabled = false;
 try{ imageGenEnabled = localStorage.getItem("nutristock_imageGenEnabled") === "1"; }catch(e){}
-var GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image";
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 var aiSuggestUi = { status:"idle", dishes:[], error:"" };
 var receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
@@ -864,46 +863,38 @@ async function callGeminiText(promptText, opts){
   return { ok:true, text: text };
 }
 
-/* separate from callGeminiText: a different model (fixed GEMINI_IMAGE_MODEL, not the
-   viewer's chosen text model) and a different response shape (inlineData image part
-   instead of a text part), so folding it into callGeminiText would complicate that
-   function's contract for its three existing callers rather than simplify anything. */
+/* Pollinations.ai (https://pollinations.ai) — free, no API key, no signup, CORS-open.
+   Confirmed by hand: the default model ("sana") occasionally 429s under shared community
+   load, but model=flux was reliable across repeated tests, so it's hardcoded here rather
+   than left to the service default. One retry covers the rest of that occasional flakiness.
+   Unlike everything else under "AI", this doesn't touch Gemini at all — no key needed,
+   nothing to log to the Gemini usage panel. */
 async function generateDishImageDataUrl(promptText){
-  if(!hasGeminiKey()) return null;
-  var geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_IMAGE_MODEL + ":generateContent";
-  var res = null;
-  try{
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function(){ controller.abort(); }, 30000);
-    res = await fetch(geminiUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: promptText }] }],
-        generationConfig: { responseModalities: ["TEXT","IMAGE"] }
-      }),
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-  }catch(e){
-    console.log("[NutriStock] 画像生成: fetch自体が失敗", e);
-    res = null;
+  var url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(promptText)
+    + "?width=768&height=768&nologo=true&model=flux&referrer=nutristock";
+  for(var attempt=0; attempt<2; attempt++){
+    try{
+      var controller = new AbortController();
+      var timeoutId = setTimeout(function(){ controller.abort(); }, 30000);
+      var res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if(res.ok){
+        var blob = await res.blob();
+        return await new Promise(function(resolve){
+          var reader = new FileReader();
+          reader.onload = function(){ resolve(reader.result); };
+          reader.onerror = function(){ resolve(null); };
+          reader.readAsDataURL(blob);
+        });
+      }
+      var errBody = await res.text().catch(function(){ return ""; });
+      console.log("[NutriStock] 画像生成(Pollinations): レスポンスNG", res.status, errBody);
+    }catch(e){
+      console.log("[NutriStock] 画像生成(Pollinations): fetch自体が失敗", e);
+    }
+    if(attempt===0) await new Promise(function(r){ setTimeout(r, 1500); });
   }
-  if(!res || !res.ok){
-    var errBody = res ? await res.text().catch(function(){ return ""; }) : "";
-    console.log("[NutriStock] 画像生成: レスポンスNG", res ? res.status : "(no response)", errBody);
-    logGeminiUsage({ ts: Date.now(), model: GEMINI_IMAGE_MODEL, ok: false, code: "image_gen_failed" });
-    return null;
-  }
-  try{
-    var data = await res.json();
-    var parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
-    var imgPart = (parts||[]).find(function(p){ return p.inlineData && p.inlineData.data; });
-    if(!imgPart) console.log("[NutriStock] 画像生成: 画像パートが無い。レスポンス全体:", JSON.stringify(data).slice(0,2000));
-    logGeminiUsage({ ts: Date.now(), model: GEMINI_IMAGE_MODEL, ok: !!imgPart });
-    if(!imgPart) return null;
-    return "data:"+(imgPart.inlineData.mimeType||"image/png")+";base64,"+imgPart.inlineData.data;
-  }catch(e){ return null; }
+  return null;
 }
 
 async function runPhotoAnalysis(file){
@@ -2433,7 +2424,7 @@ function renderSettings(){
     +   '<div class="field"><label>使用モデル</label><select id="ak_model">'
     +     GEMINI_MODEL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(geminiModel===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
     +   '</select><div class="hint">503エラーが頻発する場合は、別のモデルに切り替えると改善することがあります（無料枠のレート制限がモデルごとに別枠のため）</div></div>'
-    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめに画像生成ボタンを表示する（テキストより時間・コストがかかります）</label>'
+    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめに画像生成ボタンを表示する（Pollinations.aiの無料サービスを利用・APIキー不要。生成画像には小さな透かしが入ります）</label>'
     +   '<div class="hint">共有・他人と使う端末では開発者ツール等から読み取れてしまう点にご注意ください。</div>'
     +   '<div class="form-actions"><button type="button" id="ak_clear" class="btn ghost small">削除</button><button type="submit" class="btn small">保存</button></div>'
     + '</form>'

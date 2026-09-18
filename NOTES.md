@@ -23,7 +23,7 @@
 | 期限×不足栄養素の献立提案 | ✅ 動作 | Gemini APIキー未設定時のフォールバック。タンパク源＋野菜の組み合わせ提案ロジック |
 | AIによる献立提案（今夜のおすすめ） | ✅ 動作（要APIキー） | 2026-09-15追加。詳細は下記「AI献立提案（ホーム）」 |
 | お気に入り献立の保存 | ✅ 動作 | 2026-09-18追加。AI提案・食事記録を経由せずワンタップで再記録できる |
-| 献立の画像生成（Nano Banana） | ✅ 動作（要APIキー・設定でON/OFF） | 2026-09-18追加。デフォルトOFF・ボタン押下時のみ生成 |
+| 献立の画像生成（Pollinations.ai） | ✅ 動作（APIキー不要・設定でON/OFF） | 2026-09-18追加。無料・デフォルトOFF・ボタン押下時のみ生成。詳細は下記 |
 | 期限切れ通知（iOSショートカット連携） | ✅ 動作（要ショートカット設定） | 2026-09-18追加。歩数連携と同じ仕組み。詳細は下記 |
 | 食事記録（手入力） | ✅ 動作 | |
 | 歩数の記録 | ✅ 動作（iOS限定・要ショートカット設定） | 2026-09-16、手入力UIを廃止しiOSショートカット連携のみに一本化。詳細は下記「歩数の自動入力」 |
@@ -129,12 +129,17 @@ AI提案・食事記録それぞれの「これを記録する」ボタンは中
 - ホーム画面に「⭐ お気に入りの献立」カードが（1件以上あるときだけ）追加され、各項目に「これを記録する」（`logDishAsMeal`を再利用）と「削除」ボタンが付く。AIを呼ばずに済むので無料・高速
 - 材料の`matchedPantryId`は保存時点のパントリー状態のスナップショットなので、時間が経って該当の在庫が無くなっていた場合は単に減算がスキップされるだけ（`deductPantryForConsumption`呼び出し前の`if(stock)`チェックが既存の安全弁として機能する）
 
-### 献立の画像生成（Nano Banana、2026-09-18追加）
+### 献立の画像生成（2026-09-18追加、当日中にNano Banana→Pollinations.aiへ変更）
 
-「Gemini画像生成モデルで、おすすめ夕食を画像にする」というユーザー要望。設定タブでON/OFFを選べるようにし、デフォルトはOFF（テキスト生成よりコスト・時間がかかるため）。
+「Gemini画像生成モデルで、おすすめ夕食を画像にする」というユーザー要望。設定タブでON/OFFを選べるようにし、デフォルトはOFF。
 
-- `GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image"`（Nano Banana）を使用。既存の`callGeminiText`とは別に`generateDishImageDataUrl(promptText)`を新設（画像生成は使うモデルもレスポンス形状（`inlineData`の画像パート）も文字生成と異なるため、`callGeminiText`に無理に統合せず素直に別関数にした）
-- リクエストは`generationConfig.responseModalities: ["TEXT","IMAGE"]`を指定した`generateContent`呼び出し。既存の`callGeminiText`と同じ`candidates[0].content.parts[]`の形でレスポンスが返るので、その中から`inlineData.data`（base64）を持つパートを探して`data:image/png;base64,...`形式のURLに変換する
+- **初回実装**: `gemini-3.1-flash-image`（Nano Banana）を使用。実機で試したところ`429 RESOURCE_EXHAUSTED`・`limit: 0`で失敗。原因を調べると、この画像生成モデルはテキスト系モデルと違って**無料枠が存在せず**、Google側で請求先（課金）を有効化しないと`limit: 0`のまま一切使えないことが判明（1枚あたり$0.045〜$0.15の完全従量課金）
+- ユーザーに確認したところ課金はせず、代わりに無料の代替を探すことになった。調査の結果、**Pollinations.ai**（`image.pollinations.ai`）という、APIキー・サインアップ一切不要でCORSも許可された無料画像生成サービスを発見。実機で2回テストし、料理写真として十分実用的な画質を確認（Artifactでユーザーに実物を見せて承認を得た）
+  - 実装は`GET https://image.pollinations.ai/prompt/{URLエンコードしたプロンプト}?width=768&height=768&nologo=true&model=flux&referrer=nutristock`を`fetch`するだけ。レスポンスは画像バイナリそのもの（JSON経由ではない）なので、`blob()`→`FileReader.readAsDataURL()`でdata URLに変換
+  - **`model=flux`を明示するのが重要**: 既定モデル（`sana`）は共有の混雑時に`429`（コミュニティ全体のレート制限）で失敗することを実機で確認したが、`model=flux`を指定すると安定して成功した
+  - `nologo=true`を付けても右下に小さく「pollinations.ai」の透かしロゴが残る（除去する公開パラメータは見つからず）。個人用途としては許容範囲と判断
+  - Geminiと違い**APIキー不要**なので、この機能はもう`hasGeminiKey()`に依存しない。Gemini利用状況ログにも記録されない（別サービスのため）
+- 既存の`callGeminiText`とは別に`generateDishImageDataUrl(promptText)`のまま維持（中身だけPollinations.ai向けに差し替え）。503相当（コミュニティのレート制限）を見越して1.5秒待って1回だけ自動リトライする、既存のGemini呼び出しと同じ設計哲学を踏襲
 - 設定タブの「AI設定」カードに「🎨 今夜のおすすめに画像生成ボタンを表示する」チェックボックスを追加（`imageGenEnabled`、`localStorage`に保存）。ONのときだけ各AI提案カードに「🎨 画像を生成」ボタンが現れる
 - **完全に手動トリガーのみ**（提案が出たときに自動生成することは一切しない）。ボタンを押した1件だけを生成する。生成された画像は`aiSuggestUi.dishes[idx].imageDataUrl`に保持され、その場で再描画されてカードに表示される。お気に入り保存時は上記の通り画像を破棄する
 
