@@ -1107,8 +1107,8 @@ async function runAiSuggestions(){
     + "この在庫を使って作れる具体的な料理を最大4つ提案してください。特に賞味期限が近い食材を優先的に使う組み合わせを考えてください。\n"
     + "各料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、実際にその料理を作るのに必要な主要な材料（調味料も含めてよい）を挙げ、それぞれが上記在庫の中にあるかどうか判定してください。\n"
     + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
-    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(色・主な材料・盛り付け方・器の種類など。画像生成AIへの指示文として使うため、料理名の日本語表記に頼らず英語だけで見た目が伝わるように書くこと。例:\"a bowl of simmered beef and potatoes in sweet soy sauce, glossy brown sauce, orange carrots, dark bowl\")","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}]}]\n'
-    + "数値はすべて概算で構いません。在庫だけで無理に完結させず、一般的なレシピとして自然な材料を挙げてください（在庫に無い調味料等が混ざるのは自然です）。ただし主役の食材はできるだけ在庫にあるものを使ってください。";
+    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}],"imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(画像生成AIへの指示文として使うため、料理名の日本語表記には頼らないこと)。最重要: 直前のingredientsで列挙した具体的な材料が画像にもそのまま写っていることが伝わるように、それぞれの色・形・切り方を明示して書くこと(一般的なその料理のイメージではなく、今回のingredientsの内容そのものを描写する)。例えば具材が鶏肉と大根なら、鶏肉や大根が実際に見えるように書き、無関係な具材を想像で足さないこと。例:\"a bowl of simmered chicken and daikon radish in soy sauce, tender chicken pieces, translucent white daikon chunks, glossy brown broth, dark ceramic bowl\")"}]\n'
+    + "数値はすべて概算で構いません。在庫だけで無理に完結させず、一般的なレシピとして自然な材料を挙げてください（在庫に無い調味料等が混ざるのは自然です）。ただし主役の食材はできるだけ在庫にあるものを使ってください。imagePromptEnは必ずingredientsに列挙した材料と一致させ、そこに無い食材を描写に含めないでください。";
 
   var result = await callGeminiText(prompt, { maxOutputTokens: 1500 });
   if(!result.ok){
