@@ -484,8 +484,39 @@ function escapeAttr(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replac
 var zxingLoading = null;
 var scannerActive = false;
 var pendingBarcode = null;
+var pendingBarcodeNutrition = null; /* per-100g/ml nutrition fetched from Open Food Facts for pendingBarcode, if any */
 var onBarcodeDetected = null; /* set by whoever opens the scanner */
 var zxingReader = null;
+
+/* free, no-key, CORS-open product database (see NOTES.md "バーコード→Open Food Facts栄養情報").
+   Crowdsourced, so coverage for Japanese products is inconsistent — this is a "if it hits" bonus,
+   not something to rely on; the existing manual-entry flow is always the fallback. Its per-100g
+   fields (kcal/protein/fat/carb/fiber/salt) happen to already match NutriStock's own nutrient
+   schema, so no unit conversion is needed — we just take Open Food Facts' fields as-is. */
+async function lookupOpenFoodFacts(code){
+  try{
+    var res = await fetch(
+      "https://world.openfoodfacts.org/api/v2/product/" + encodeURIComponent(code) + ".json?fields=product_name,product_name_ja,nutriments"
+    );
+    if(!res.ok) return null;
+    var data = await res.json();
+    if(data.status !== 1 || !data.product) return null;
+    var name = data.product.product_name_ja || data.product.product_name;
+    if(!name) return null;
+    var n = data.product.nutriments || {};
+    return {
+      name: String(name).slice(0,60),
+      nutrition100: {
+        kcal: Number(n["energy-kcal_100g"])||0,
+        p: Number(n["proteins_100g"])||0,
+        f: Number(n["fat_100g"])||0,
+        c: Number(n["carbohydrates_100g"])||0,
+        fiber: Number(n["fiber_100g"])||0,
+        salt: Number(n["salt_100g"])||0
+      }
+    };
+  }catch(e){ return null; }
+}
 
 function loadZXing(){
   if(window.ZXing) return Promise.resolve(window.ZXing);
@@ -1536,6 +1567,20 @@ var EXPIRY_FILTER_OPTIONS = [
 function foodOptionsHtml(selected){
   return FOOD_DB.map(function(f){ return '<option value="'+f.key+'"'+(f.key===selected?" selected":"")+'>'+f.name+'</option>'; }).join("");
 }
+/* meal-record dropdown: FOOD_DB plus any pantry item that carries its own per-100g nutrition
+   (currently only barcode items looked up via Open Food Facts) — option value "pantry:<id>"
+   disambiguates these from FOOD_DB keys and "__custom". Kept separate from foodOptionsHtml()
+   since that one is also used by the pantry-add form, where listing pantry items make no sense. */
+function mealFoodOptionsHtml(){
+  var pantryWithNutrition = state.pantry.filter(function(p){ return p.nutrition100; });
+  var pantryOptions = pantryWithNutrition.length
+    ? '<optgroup label="在庫の商品（栄養情報あり）">' + pantryWithNutrition.map(function(p){
+        return '<option value="pantry:'+p.id+'">'+escapeAttr(p.name)+'</option>';
+      }).join("") + '</optgroup>'
+    : "";
+  return pantryOptions + '<optgroup label="食品データベース">' + foodOptionsHtml() + '</optgroup>';
+}
+
 function checkExistingStock(matches){
   var noteEl = document.getElementById("pf_barcodeNote");
   if(!noteEl) return;
@@ -1750,7 +1795,7 @@ function renderPantry(){
   dEl.value = t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");
 
   document.getElementById("pf_scanBtn").addEventListener("click", function(){
-    openScanner(function(code){
+    openScanner(async function(code){
       var known = state.barcodes[code];
       var existing = state.pantry.find(function(p){ return p.barcode === code; });
       console.log("[NutriStock] パントリーで受信:", code, known ? "（登録済み: "+known.name+"）" : "（新規）", existing ? "在庫あり" : "在庫なし");
@@ -1763,14 +1808,27 @@ function renderPantry(){
       document.getElementById("pf_custom").value = prefillName;
       if(prefillUnit) document.getElementById("pf_unit").value = prefillUnit;
       if(prefillCat) document.getElementById("pf_customCat").value = prefillCat;
-      if(!prefillName) document.getElementById("pf_custom").focus();
       pendingBarcode = code;
+      pendingBarcodeNutrition = known ? (known.nutrition100 || null) : null;
 
       if(existing){
         checkExistingStock([existing]);
-      } else if(known){
+        if(!prefillName) document.getElementById("pf_custom").focus();
+        return;
+      }
+      if(known){
         noteEl.innerHTML = '<div class="barcode-note">前回の登録内容を自動入力しました（JAN: '+escapeAttr(code)+'）</div>';
+        return;
+      }
+      /* first time seeing this barcode — try Open Food Facts before asking the viewer to type it in */
+      noteEl.innerHTML = '<div class="barcode-note">Open Food Factsで商品を検索中…（JAN: '+escapeAttr(code)+'）</div>';
+      var off = await lookupOpenFoodFacts(code);
+      if(off){
+        document.getElementById("pf_custom").value = off.name;
+        pendingBarcodeNutrition = off.nutrition100;
+        noteEl.innerHTML = '<div class="barcode-note">Open Food Factsから自動入力しました（栄養情報も取得済み・JAN: '+escapeAttr(code)+'）</div>';
       } else {
+        document.getElementById("pf_custom").focus();
         noteEl.innerHTML = '<div class="barcode-note">初めてのバーコードです（JAN: '+escapeAttr(code)+'）。食材名を入力すると次回から自動入力されます</div>';
       }
     });
@@ -1793,7 +1851,7 @@ function renderPantry(){
     lastPantrySubmitAt = now;
     var barcodeChanged = false;
     if(pendingBarcode){
-      state.barcodes[pendingBarcode] = { name: name, unit: unit, category: cat };
+      state.barcodes[pendingBarcode] = { name: name, unit: unit, category: cat, nutrition100: pendingBarcodeNutrition || null };
       barcodeChanged = true;
     }
     var mergeTarget = state.pantry.find(function(p){
@@ -1804,13 +1862,15 @@ function renderPantry(){
     if(mergeTarget){
       mergeTarget.qty = round1(mergeTarget.qty + qty);
       if(pendingBarcode && !mergeTarget.barcode) mergeTarget.barcode = pendingBarcode;
+      if(pendingBarcodeNutrition && !mergeTarget.nutrition100) mergeTarget.nutrition100 = pendingBarcodeNutrition;
     } else {
-      pushedItem = { id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, addedAt: Date.now() };
+      pushedItem = { id: uid(), name: name, foodKey: custom?null:foodKey, category: cat, qty: qty, unit: unit, expiry: expiry, barcode: pendingBarcode||null, nutrition100: pendingBarcodeNutrition||null, addedAt: Date.now() };
       state.pantry.push(pushedItem);
     }
     pushRecentFood({ name: name, foodKey: custom?null:foodKey, unit: unit, category: cat });
     state.shoppingList = state.shoppingList.filter(function(s){ return s.name !== name; }); /* bought it, drop from the list if present */
     pendingBarcode = null;
+    pendingBarcodeNutrition = null;
     var noteEl = document.getElementById("pf_barcodeNote");
     if(noteEl) noteEl.innerHTML = "";
     persist(barcodeChanged ? ["pantry","barcodes","recentFoods","shoppingList"] : ["pantry","recentFoods","shoppingList"]); renderAll();
@@ -1953,7 +2013,7 @@ function renderMeals(){
 
   var typeMetersHtml = typeEntries.length ? mealTypeMeters(typeTotals) : "";
 
-  var pantryMatches = state.pantry.filter(function(p){ return p.foodKey; });
+  var pantryMatches = state.pantry.filter(function(p){ return p.foodKey || p.nutrition100; });
 
   var photoCard = "";
   if(!hasGeminiKey()){
@@ -2034,7 +2094,7 @@ function renderMeals(){
     + '</div>'
     + '<form id="mealForm" class="inline">'
     +   '<div class="field-row">'
-    +     '<div class="field"><label>食品</label><select id="mf_food">'+ '<option value="">— 選択してください —</option>' + foodOptionsHtml() + '<option value="__custom">カスタム入力…</option></select></div>'
+    +     '<div class="field"><label>食品</label><select id="mf_food">'+ '<option value="">— 選択してください —</option>' + mealFoodOptionsHtml() + '<option value="__custom">カスタム入力…</option></select></div>'
     +     '<div class="field"><label>量 (g)</label><input id="mf_qty" type="number" min="0" step="1" value="100"></div>'
     +   '</div>'
     +   '<div class="field" id="mf_customWrap" style="display:none">'
@@ -2079,6 +2139,18 @@ function renderMeals(){
         carb: parseFloat(document.getElementById("mf_cc").value)||0,
         fiber: 0, salt: 0, veg: 0
       };
+    } else if(foodKey.indexOf("pantry:")===0){
+      var pItem = state.pantry.find(function(p){ return p.id===foodKey.slice(7); });
+      if(!pItem || !pItem.nutrition100) return;
+      name = pItem.name;
+      var n100 = pItem.nutrition100;
+      var factor = qty/100;
+      nutrients = { kcal: n100.kcal*factor, protein: n100.p*factor, fat: n100.f*factor, carb: n100.c*factor, fiber: n100.fiber*factor, salt: n100.salt*factor, veg: 0 };
+      var deductElP = document.getElementById("mf_deduct");
+      if(deductElP && deductElP.checked){
+        deductPantryForConsumption(pItem, qty);
+        pantryChanged = true;
+      }
     } else {
       var f = FOOD_BY_KEY[foodKey];
       name = f.name;
