@@ -326,7 +326,7 @@ var PROTEIN_GOAL_OPTIONS = [
 
 /* ---------- state ---------- */
 function defaultState(){
-  return { profile:null, targets:null, pantry:[], meals:[], steps:{}, weights:{}, barcodes:{}, shoppingList:[], recentFoods:[] };
+  return { profile:null, targets:null, pantry:[], meals:[], steps:{}, weights:{}, barcodes:{}, shoppingList:[], recentFoods:[], favoriteDishes:[], notifySettings:{enabled:false,daysBefore:2} };
 }
 /* db snapshots deliver frozen data — deep-clone before merging into mutable local state */
 function deepClone(o){ return JSON.parse(JSON.stringify(o)); }
@@ -419,6 +419,11 @@ try{ geminiModel = localStorage.getItem("nutristock_geminiModel") || GEMINI_MODE
 var geminiApiKey = "";
 try{ geminiApiKey = localStorage.getItem("nutristock_geminiApiKey") || ""; }catch(e){}
 function hasGeminiKey(){ return !!geminiApiKey; }
+/* opt-in — image generation is slower/costlier than text, so it stays off by default and
+   only ever runs when the viewer explicitly taps a per-dish "generate image" button */
+var imageGenEnabled = false;
+try{ imageGenEnabled = localStorage.getItem("nutristock_imageGenEnabled") === "1"; }catch(e){}
+var GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image";
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 var aiSuggestUi = { status:"idle", dishes:[], error:"" };
 var receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
@@ -859,6 +864,42 @@ async function callGeminiText(promptText, opts){
   return { ok:true, text: text };
 }
 
+/* separate from callGeminiText: a different model (fixed GEMINI_IMAGE_MODEL, not the
+   viewer's chosen text model) and a different response shape (inlineData image part
+   instead of a text part), so folding it into callGeminiText would complicate that
+   function's contract for its three existing callers rather than simplify anything. */
+async function generateDishImageDataUrl(promptText){
+  if(!hasGeminiKey()) return null;
+  var geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_IMAGE_MODEL + ":generateContent";
+  var res = null;
+  try{
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function(){ controller.abort(); }, 30000);
+    res = await fetch(geminiUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": geminiApiKey },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: { responseModalities: ["TEXT","IMAGE"] }
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+  }catch(e){ res = null; }
+  if(!res || !res.ok){
+    logGeminiUsage({ ts: Date.now(), model: GEMINI_IMAGE_MODEL, ok: false, code: "image_gen_failed" });
+    return null;
+  }
+  try{
+    var data = await res.json();
+    var parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+    var imgPart = (parts||[]).find(function(p){ return p.inlineData && p.inlineData.data; });
+    logGeminiUsage({ ts: Date.now(), model: GEMINI_IMAGE_MODEL, ok: !!imgPart });
+    if(!imgPart) return null;
+    return "data:"+(imgPart.inlineData.mimeType||"image/png")+";base64,"+imgPart.inlineData.data;
+  }catch(e){ return null; }
+}
+
 async function runPhotoAnalysis(file){
   if(!hasGeminiKey()){
     photoUi.status = "error";
@@ -983,6 +1024,56 @@ async function guessFoodIcon(name){
    automatic) so opening/switching to the home tab never spends API quota by itself.
    Reuses geminiPhotoItemsFromResponseText()'s dish+ingredients shape since the prompt asks
    for the exact same JSON structure the photo-analysis feature already produces. */
+/* favorites deliberately drop any generated image (imageDataUrl/imageLoading) before
+   persisting — base64 images are large and state.favoriteDishes lives in localStorage,
+   unlike aiSuggestUi.dishes which is in-memory only for the current session */
+function isFavoriteDish(name){
+  return (state.favoriteDishes||[]).some(function(d){ return d.name===name; });
+}
+function toggleFavoriteDish(dish){
+  state.favoriteDishes = state.favoriteDishes || [];
+  var idx = state.favoriteDishes.findIndex(function(d){ return d.name===dish.name; });
+  if(idx>=0){
+    state.favoriteDishes.splice(idx,1);
+  } else {
+    var saved = Object.assign({}, dish);
+    delete saved.imageDataUrl; delete saved.imageLoading;
+    saved.savedAt = Date.now();
+    state.favoriteDishes.unshift(saved);
+    if(state.favoriteDishes.length>20) state.favoriteDishes.length = 20;
+  }
+  persist(["favoriteDishes"]);
+}
+/* shared by the AI suggestion "これを記録する" button and the favorites list's own —
+   both operate on a dish+ingredients object of the same shape */
+function logDishAsMeal(d){
+  var nutrients = nutrientsForPhotoItem(d, d.estimatedGrams);
+  var pantryChanged = false;
+  (d.ingredients||[]).forEach(function(ing){
+    if(!ing.matchedPantryId) return;
+    var stock = state.pantry.find(function(p){ return p.id===ing.matchedPantryId; });
+    if(stock){ deductPantryForConsumption(stock, ing.estimatedGrams); pantryChanged = true; }
+  });
+  state.meals.push({ id: uid(), date: todayStr(), type: "dinner", name: d.name, qty: d.estimatedGrams, nutrients: nutrients, createdAt: Date.now(), cookMode: "home", ingredients: d.ingredients||[] });
+  persist(pantryChanged ? ["meals","pantry","shoppingList"] : ["meals"]);
+  renderAll();
+}
+
+/* per-dish, button-triggered only (see imageGenEnabled) — never generated automatically
+   for every suggestion, to keep this opt-in feature's cost predictable */
+async function generateImageForSuggestedDish(idx){
+  var d = aiSuggestUi.dishes[idx];
+  if(!d || d.imageLoading) return;
+  d.imageLoading = true;
+  renderHome();
+  var prompt = "日本の家庭料理「"+d.name+"」の、実際に美味しそうな一皿の写真のような画像を生成してください。清潔な食卓の上に盛り付けられた、リアルな食品写真のスタイルでお願いします。文字やロゴは入れないでください。";
+  var url = await generateDishImageDataUrl(prompt);
+  d.imageLoading = false;
+  d.imageDataUrl = url;
+  if(!url) showToast("画像を生成できませんでした");
+  renderHome();
+}
+
 async function runAiSuggestions(){
   if(!hasGeminiKey()){
     aiSuggestUi.status = "error";
@@ -1430,7 +1521,12 @@ function renderHome(){
           +   '<div class="ingredient-detail-list" style="margin-top:6px">'+ingredientsHtml+'</div>'
           + '</details>'
           + '<div class="d">'+escapeAttr(d.reason)+'</div>'
-          + '<button type="button" class="btn small ai-suggest-log-btn" data-idx="'+idx+'" style="margin-top:8px">これを記録する</button>'
+          + (d.imageDataUrl ? '<img src="'+d.imageDataUrl+'" style="width:100%;border-radius:10px;margin-top:8px;display:block">' : '')
+          + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;flex-wrap:wrap">'
+          +   '<button type="button" class="btn small ai-suggest-log-btn" data-idx="'+idx+'">これを記録する</button>'
+          +   '<button type="button" class="btn ghost small ai-suggest-fav-btn" data-idx="'+idx+'">'+(isFavoriteDish(d.name)?"⭐ 保存済み":"☆ お気に入り")+'</button>'
+          +   (imageGenEnabled ? '<button type="button" class="btn ghost small ai-suggest-img-btn" data-idx="'+idx+'"'+(d.imageLoading?" disabled":"")+'>'+(d.imageLoading?"🎨 生成中…":(d.imageDataUrl?"🎨 再生成":"🎨 画像を生成"))+'</button>' : '')
+          + '</div>'
           + '</div></div>';
       }).join("") + '</div>';
     } else {
@@ -1471,6 +1567,19 @@ function renderHome(){
     + (targets ? '' : '<div class="card"><div class="suggest-card"><div class="ic">⚙️</div><div><div class="t">目標値が未設定です</div><div class="d">「設定」タブでプロフィールを入力すると、栄養目標を自動計算します。</div></div></div></div>')
     + '<div class="card"><div class="card-head"><h2>栄養バランス</h2></div><div class="sub">本日 '+todayStr()+' の合計摂取量</div><div class="meters">'+metersHtml+'</div></div>'
     + suggestCard
+    + ((state.favoriteDishes||[]).length ? (
+      '<div class="card"><div class="card-head"><h2>⭐ お気に入りの献立</h2></div><div class="sub">AIを呼び出さずすぐに記録できます</div>'
+      + '<div class="suggest-list">' + state.favoriteDishes.map(function(d, idx){
+          return '<div class="suggest-card"><div class="ic">⭐</div><div style="flex:1;min-width:0">'
+            + '<div class="t">'+escapeAttr(d.name)+'</div>'
+            + '<div class="d">'+escapeAttr(d.reason||"")+'</div>'
+            + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px">'
+            +   '<button type="button" class="btn small fav-log-btn" data-idx="'+idx+'">これを記録する</button>'
+            +   '<button type="button" class="btn ghost small fav-remove-btn" data-idx="'+idx+'">削除</button>'
+            + '</div>'
+            + '</div></div>';
+        }).join("") + '</div></div>'
+    ) : '')
     + '<div class="card"><div class="card-head"><h2>賞味期限が近い食材</h2></div><div class="sub">上位5件を表示</div>'+expiringHtml+'</div>';
 
   el.querySelectorAll(".suggest-log-btn").forEach(function(btn){
@@ -1500,17 +1609,32 @@ function renderHome(){
   el.querySelectorAll(".ai-suggest-log-btn").forEach(function(btn){
     btn.addEventListener("click", function(){
       var d = aiSuggestUi.dishes[parseInt(btn.dataset.idx, 10)];
+      if(d) logDishAsMeal(d);
+    });
+  });
+  el.querySelectorAll(".ai-suggest-fav-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var d = aiSuggestUi.dishes[parseInt(btn.dataset.idx, 10)];
       if(!d) return;
-      var nutrients = nutrientsForPhotoItem(d, d.estimatedGrams);
-      var pantryChanged = false;
-      (d.ingredients||[]).forEach(function(ing){
-        if(!ing.matchedPantryId) return;
-        var stock = state.pantry.find(function(p){ return p.id===ing.matchedPantryId; });
-        if(stock){ deductPantryForConsumption(stock, ing.estimatedGrams); pantryChanged = true; }
-      });
-      state.meals.push({ id: uid(), date: todayStr(), type: "dinner", name: d.name, qty: d.estimatedGrams, nutrients: nutrients, createdAt: Date.now(), cookMode: "home", ingredients: d.ingredients||[] });
-      persist(pantryChanged ? ["meals","pantry","shoppingList"] : ["meals"]);
-      renderAll();
+      toggleFavoriteDish(d);
+      renderHome();
+    });
+  });
+  el.querySelectorAll(".ai-suggest-img-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      generateImageForSuggestedDish(parseInt(btn.dataset.idx, 10));
+    });
+  });
+  el.querySelectorAll(".fav-log-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var d = state.favoriteDishes[parseInt(btn.dataset.idx, 10)];
+      if(d) logDishAsMeal(d);
+    });
+  });
+  el.querySelectorAll(".fav-remove-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      state.favoriteDishes.splice(parseInt(btn.dataset.idx, 10), 1);
+      persist(["favoriteDishes"]); renderAll();
     });
   });
 }
@@ -2303,6 +2427,7 @@ function renderSettings(){
     +   '<div class="field"><label>使用モデル</label><select id="ak_model">'
     +     GEMINI_MODEL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(geminiModel===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
     +   '</select><div class="hint">503エラーが頻発する場合は、別のモデルに切り替えると改善することがあります（無料枠のレート制限がモデルごとに別枠のため）</div></div>'
+    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめに画像生成ボタンを表示する（テキストより時間・コストがかかります）</label>'
     +   '<div class="hint">共有・他人と使う端末では開発者ツール等から読み取れてしまう点にご注意ください。</div>'
     +   '<div class="form-actions"><button type="button" id="ak_clear" class="btn ghost small">削除</button><button type="submit" class="btn small">保存</button></div>'
     + '</form>'
@@ -2323,6 +2448,19 @@ function renderSettings(){
           + '<div class="hint" style="margin-top:8px">直近10件を表示（最大200件まで記録）</div>';
       })()
     + '</div>'
+    + (function(){
+        var ns = state.notifySettings || { enabled:false, daysBefore:2 };
+        return '<div class="card">'
+          + '<div class="card-head"><h2>期限切れ通知</h2></div>'
+          + '<div class="sub">アプリはバックグラウンドで動けないため、単体では通知できません。iOSショートカットで決まった時刻にこのページを開く設定と組み合わせると、期限が近い食材を通知できます（歩数連携と同じ仕組み）。</div>'
+          + '<form id="notifyForm" class="inline">'
+          +   '<label class="checkline"><input type="checkbox" id="ns_enabled"'+(ns.enabled?" checked":"")+'> 通知を有効にする</label>'
+          +   '<div class="field"><label>何日前から通知するか</label><input id="ns_days" type="number" min="0" max="14" step="1" value="'+ns.daysBefore+'"></div>'
+          +   '<div class="form-actions"><button type="submit" class="btn small">保存</button></div>'
+          + '</form>'
+          + '<div class="hint" style="margin-top:8px">設定手順はNOTES.mdの「期限切れ通知（iOSショートカット連携）」を参照してください。</div>'
+          + '</div>';
+      })()
     + '<div class="card">'
     + '<div class="card-head"><h2>プロフィール</h2></div><div class="sub">身長・体重・年齢から基準の栄養目標を計算します</div>'
     + '<form id="profileForm" class="inline">'
@@ -2373,8 +2511,10 @@ function renderSettings(){
     try{ localStorage.setItem("nutristock_geminiApiKey", geminiApiKey); }catch(e){}
     geminiModel = document.getElementById("ak_model").value || GEMINI_MODEL_DEFAULT;
     try{ localStorage.setItem("nutristock_geminiModel", geminiModel); }catch(e){}
+    imageGenEnabled = document.getElementById("ak_imagegen").checked;
+    try{ localStorage.setItem("nutristock_imageGenEnabled", imageGenEnabled ? "1" : "0"); }catch(e){}
     showToast(geminiApiKey ? "APIキー・設定を保存しました" : "APIキーを削除しました");
-    renderMeals();
+    renderAll();
   });
   document.getElementById("ak_clear").addEventListener("click", function(){
     geminiApiKey = "";
@@ -2382,6 +2522,21 @@ function renderSettings(){
     document.getElementById("ak_key").value = "";
     showToast("APIキーを削除しました");
     renderMeals();
+  });
+
+  document.getElementById("notifyForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var enabled = document.getElementById("ns_enabled").checked;
+    state.notifySettings = {
+      enabled: enabled,
+      daysBefore: Math.max(0, parseInt(document.getElementById("ns_days").value, 10) || 0)
+    };
+    persist(["notifySettings"]);
+    if(enabled && window.Notification && Notification.permission==="default"){
+      Notification.requestPermission();
+    }
+    showToast("通知設定を保存しました");
+    renderSettings();
   });
 
   document.getElementById("pr_ppk_goal").addEventListener("change", function(){
@@ -2472,6 +2627,41 @@ function applyStepsFromUrl(){
   }catch(e){}
 }
 
+/* second iOS Shortcuts bridge, same pattern: a time-triggered Personal Automation opens
+   this page with ?checkExpiry=1 — no Health data needed this time, so the Shortcut side
+   is just a single "Open URLs" action (no "Find Health Samples"/"Calculate Statistics"
+   detour like the steps one needed). See NOTES.md "期限切れ通知（iOSショートカット連携）". */
+function checkExpiringItems(){
+  var days = (state.notifySettings && typeof state.notifySettings.daysBefore==="number") ? state.notifySettings.daysBefore : 2;
+  return state.pantry
+    .filter(function(p){ return daysUntil(p.expiry) <= days; })
+    .sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
+}
+function applyExpiryCheckFromUrl(){
+  try{
+    var params = new URLSearchParams(location.search);
+    if(!params.has("checkExpiry")) return;
+    var url = new URL(location.href);
+    url.searchParams.delete("checkExpiry");
+    history.replaceState(null, "", url.toString());
+    if(!state.notifySettings || !state.notifySettings.enabled) return;
+    var items = checkExpiringItems();
+    if(!items.length) return;
+    var body = items.slice(0,5).map(function(p){
+      var d = daysUntil(p.expiry);
+      return p.name + "（" + (d<=0 ? "期限切れ" : "あと"+d+"日") + "）";
+    }).join("\n");
+    if(window.Notification && Notification.permission==="granted"){
+      new Notification("賞味期限が近い食材があります", { body: body, icon: "icon-192.png" });
+    } else if(window.Notification && Notification.permission!=="denied"){
+      Notification.requestPermission().then(function(perm){
+        if(perm==="granted") new Notification("賞味期限が近い食材があります", { body: body, icon: "icon-192.png" });
+      });
+    }
+    showToast(items.length+"件の食材が期限間近です");
+  }catch(e){}
+}
+
 /* ---------- theme toggle ---------- */
 function effectiveTheme(){
   var stored = null;
@@ -2496,6 +2686,7 @@ applyTheme();
 
 initDb();
 applyStepsFromUrl();
+applyExpiryCheckFromUrl();
 })();
 </script>
 
