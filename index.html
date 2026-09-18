@@ -528,6 +528,24 @@ async function startDecoding(ZXing){
     console.log("[NutriStock] カメラ起動成功、読み取り待機中…");
     setScannerHint("バーコードを縦向き(90度回転)にして枠に合わせてください。正面のままだと読み取れないことが多いです");
   }).catch(function(err){
+    /* a cached camera id can go stale (Safari occasionally rotates device ids — after an
+       OS/browser update, clearing site data, etc.) and getUserMedia throws OverconstrainedError
+       since nothing matches that exact deviceId anymore. Forget it and retry once with the
+       browser's own default camera before giving up. */
+    if(err && err.name==="OverconstrainedError" && preferredCameraId){
+      preferredCameraId = null;
+      try{ localStorage.removeItem("nutristock_cameraId"); }catch(e){}
+      zxingReader.decodeFromVideoDevice(undefined, "scannerVideo", decodeResultCallback(ZXing))
+        .then(function(){
+          console.log("[NutriStock] カメラIDを再検出して起動成功");
+          setScannerHint("バーコードを縦向き(90度回転)にして枠に合わせてください。正面のままだと読み取れないことが多いです");
+        })
+        .catch(function(err2){
+          var detail2 = err2 && (err2.name || err2.message) ? (err2.name||"")+" "+(err2.message||"") : "";
+          setScannerHint("カメラを起動できませんでした。権限が許可されているか確認してください。" + (detail2 ? "（"+detail2+"）" : ""));
+        });
+      return;
+    }
     var detail = err && (err.name || err.message) ? (err.name||"")+" "+(err.message||"") : "";
     setScannerHint("カメラを起動できませんでした。権限が許可されているか確認してください。" + (detail ? "（"+detail+"）" : ""));
   });
@@ -552,6 +570,12 @@ async function openScanner(onDetected){
     try{
       availableCameras = await zxingReader.listVideoInputDevices();
       document.getElementById("scannerFlipBtn").style.display = availableCameras.length > 1 ? "" : "none";
+      /* the cached camera id can go stale (see startDecoding) — drop it up front if it no
+         longer matches a real device, instead of only reacting after getUserMedia rejects it */
+      if(preferredCameraId && !availableCameras.some(function(d){ return d.deviceId===preferredCameraId; })){
+        preferredCameraId = null;
+        try{ localStorage.removeItem("nutristock_cameraId"); }catch(e){}
+      }
       if(!preferredCameraId){
         var back = availableCameras.find(function(d){ return /back|rear|environment/i.test(d.label); });
         var chosen = back || availableCameras[0];
