@@ -1093,16 +1093,22 @@ async function generateImageForSuggestedDish(idx){
   renderHome();
 }
 
-/* Fires once per suggestion batch (see runAiSuggestions), one dish at a time — sequential
-   rather than parallel to stay under Pollinations' shared community rate limit (see
-   NOTES.md, the 429s seen under load with the default "sana" model). Bails out if the
-   dish list has since been replaced (user hit "AIに提案してもらう" again mid-loop). */
+/* Fires once per suggestion batch (see runAiSuggestions), all dishes in parallel. Originally
+   this awaited one dish at a time to avoid overloading Pollinations, but that made total
+   wait time the SUM of every dish's request (worst case ~61.5s each, from the 30s timeout
+   + 1.5s pause + 30s retry in generateDishImageDataUrl above — with 4 dishes that's up to
+   ~4 minutes, which is what the user actually hit). Live-tested firing requests both
+   sequentially and in parallel against Pollinations: the slowness/429s showed up equally
+   either way (general service congestion, not something our own concurrency was causing),
+   so going parallel only helps — wait time becomes the single SLOWEST dish instead of the
+   total. Each dish still bails out individually if the suggestion batch has since been
+   replaced (user hit "AIに提案してもらう" again). */
 async function generateAllSuggestedDishImages(){
   var dishes = aiSuggestUi.dishes;
-  for(var i=0;i<dishes.length;i++){
+  await Promise.all(dishes.map(function(d, i){
     if(aiSuggestUi.dishes !== dishes) return;
-    await generateImageForSuggestedDish(i);
-  }
+    return generateImageForSuggestedDish(i);
+  }));
 }
 
 function recipeButtonHtml(d, idx, source){
