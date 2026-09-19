@@ -1093,22 +1093,22 @@ async function generateImageForSuggestedDish(idx){
   renderHome();
 }
 
-/* Fires once per suggestion batch (see runAiSuggestions), all dishes in parallel. Originally
-   this awaited one dish at a time to avoid overloading Pollinations, but that made total
-   wait time the SUM of every dish's request (worst case ~61.5s each, from the 30s timeout
-   + 1.5s pause + 30s retry in generateDishImageDataUrl above — with 4 dishes that's up to
-   ~4 minutes, which is what the user actually hit). Live-tested firing requests both
-   sequentially and in parallel against Pollinations: the slowness/429s showed up equally
-   either way (general service congestion, not something our own concurrency was causing),
-   so going parallel only helps — wait time becomes the single SLOWEST dish instead of the
-   total. Each dish still bails out individually if the suggestion batch has since been
-   replaced (user hit "AIに提案してもらう" again). */
+/* Fires once per suggestion batch (see runAiSuggestions), one dish at a time. This was
+   briefly changed to Promise.all (fire all dishes at once) to cut total wait time, but
+   real error payloads captured from the app (not a synthetic curl test) showed Pollinations
+   enforces a hard "max 1 in-flight request per IP" queue: `"message":"Queue full for
+   IP: ...: 1 requests already queued (max: 1)"`. Firing in parallel meant only one of N
+   dishes could ever be accepted — the rest got an instant 429. So parallel wasn't just
+   unhelpful, it was actively worse. Reverted to sequential, which is the only way to stay
+   under that per-IP limit; the 30s timeout + 1.5s pause + 30s retry in
+   generateDishImageDataUrl above still means total wait scales with dish count, but that's
+   an inherent tradeoff of a free, unauthenticated, single-slot-per-IP service. */
 async function generateAllSuggestedDishImages(){
   var dishes = aiSuggestUi.dishes;
-  await Promise.all(dishes.map(function(d, i){
+  for(var i=0;i<dishes.length;i++){
     if(aiSuggestUi.dishes !== dishes) return;
-    return generateImageForSuggestedDish(i);
-  }));
+    await generateImageForSuggestedDish(i);
+  }
 }
 
 function recipeButtonHtml(d, idx, source){
