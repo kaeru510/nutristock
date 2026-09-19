@@ -1185,13 +1185,12 @@ function runQueuedPollinationsRequest(fn){
 var POLLINATIONS_MAX_ATTEMPTS = 3;
 var POLLINATIONS_RETRY_DELAY_SEC = 30;
 
-/* Triggered per-dish by the manual "🎨 画像を生成" / "🔄 別の画像に" / "🎨 再試行" button (see
-   the imageBtn markup in renderHome). Automatic generation for every suggested dish was
-   tried and then reverted 2026-09-19 — see generateAllSuggestedDishImages below and
-   NOTES.md — because bursting up to 4 requests within about a minute made this app itself
-   more likely to trip Pollinations' per-IP/per-minute limits than one-at-a-time manual
-   clicks, on top of the service's own congestion. Pollinations.ai is free and doesn't
-   touch the Gemini quota either way. */
+/* Called both automatically for every dish (see generateAllSuggestedDishImages, run right
+   after a suggestion batch loads when imageGenEnabled) and by the manual "🎨 画像を生成" /
+   "🔄 別の画像に" / "🎨 再試行" button on a single dish (see imageBtn markup in renderHome).
+   Auto-generation was tried, reverted, then re-enabled once this function grew bounded
+   per-attempt retries with real spacing — see NOTES.md for the full history. Pollinations.ai
+   is free and doesn't touch the Gemini quota either way. */
 async function generateImageForSuggestedDish(idx){
   var d = aiSuggestUi.dishes[idx];
   if(!d || d.imageLoading) return;
@@ -1238,17 +1237,24 @@ async function generateImageForSuggestedDish(idx){
   renderHome();
 }
 
-/* Currently unused — runAiSuggestions no longer calls this (see 2026-09-19 revert to manual
-   generation, NOTES.md). Kept rather than deleted since going back to auto-for-all-dishes
-   is exactly the kind of thing that might get re-tried; wiring it back in is a one-line
-   change (`generateAllSuggestedDishImages();` in runAiSuggestions) if that experiment
-   returns. Was itself already fixed once from Promise.all (fire all dishes at once) back to
-   this sequential for+await, after real error payloads showed Pollinations enforces a hard
-   "max 1 in-flight request per IP" queue: `"message":"Queue full for IP: ...: 1 requests
-   already queued (max: 1)"` — parallel meant only one of N dishes could ever be accepted. */
+/* Re-enabled 2026-09-19 (second time — see NOTES.md for the full back-and-forth) now that
+   generateImageForSuggestedDish has bounded per-dish retries with backoff. The original
+   auto-batch failure mode was: dish 1 succeeds fast, dish 2's first attempt hangs, dishes
+   3/4 fire immediately after and bounce off the still-occupied per-IP slot. Per-dish retry
+   alone doesn't fix that — it would still happen on every dish's FIRST attempt, since
+   nothing paced the transition FROM one dish's success straight INTO the next dish's first
+   attempt. So this loop also waits POLLINATIONS_RETRY_DELAY_SEC between dishes (not just
+   between retries within a dish) — same constant, same reasoning: give any slot left
+   occupied by the previous dish real time to clear before the next dish's first attempt,
+   even when that previous dish appeared to succeed. Real error payloads earlier also showed
+   Pollinations enforces a hard "max 1 in-flight request per IP" queue (`"message":"Queue
+   full for IP: ...: 1 requests already queued (max: 1)"`) — firing all dishes via
+   Promise.all was tried and reverted for that reason; this stays sequential. */
 async function generateAllSuggestedDishImages(){
   var dishes = aiSuggestUi.dishes;
   for(var i=0;i<dishes.length;i++){
+    if(aiSuggestUi.dishes !== dishes) return;
+    if(i>0) await new Promise(function(r){ setTimeout(r, POLLINATIONS_RETRY_DELAY_SEC*1000); });
     if(aiSuggestUi.dishes !== dishes) return;
     await generateImageForSuggestedDish(i);
   }
@@ -1364,12 +1370,11 @@ async function runAiSuggestions(){
   }
   renderHome();
   if(imageGenEnabled && aiSuggestUi.dishes.length){
-    /* Auto-generating all dishes at once was reverted 2026-09-19 (see NOTES.md): bursting
-       up to 4 requests within ~1 minute made this app itself far more likely to trip
-       Pollinations' per-IP concurrency=1 / per-minute rate limits than the original
-       one-click-at-a-time manual flow ever did, on top of whatever the service's own
-       congestion is doing. Back to manual — the health check below still runs so the
-       congestion banner is informative even before the user taps a button. */
+    /* Auto-generation was reverted, then re-enabled a second time 2026-09-19 (see NOTES.md
+       for the full back-and-forth) once generateImageForSuggestedDish grew bounded retries
+       with real spacing between attempts AND between dishes — that spacing is what the
+       first attempt at auto-generation was missing, not automation itself. */
+    generateAllSuggestedDishImages();
     checkPollinationsHealth().then(function(h){ aiSuggestUi.pollinationsHealth = h; renderHome(); });
     startPollinationsHealthPolling();
   }
@@ -2729,7 +2734,7 @@ function renderSettings(){
     +   '<div class="field"><label>使用モデル</label><select id="ak_model">'
     +     GEMINI_MODEL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(geminiModel===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
     +   '</select><div class="hint">503エラーが頻発する場合は、別のモデルに切り替えると改善することがあります（無料枠のレート制限がモデルごとに別枠のため）</div></div>'
-    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめに画像生成ボタンを表示する（Pollinations.aiの無料サービスを利用・APIキー不要・Gemini利用枠は消費しません。生成画像には小さな透かしが入ります）</label>'
+    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめが出たとき、各料理の画像を自動生成する（Pollinations.aiの無料サービスを利用・APIキー不要・Gemini利用枠は消費しません。混雑時は品ごとに間隔を空けて再試行するため時間がかかることがあります。生成画像には小さな透かしが入ります）</label>'
     +   '<div class="field"><label>画像生成のタイムアウト(秒)</label><input id="ak_imgtimeout" type="number" min="10" max="600" step="5" value="'+pollinationsTimeoutSec+'"></div>'
     +   '<div class="hint">Pollinations.aiが混雑していると無応答のまま詰まることがあります。長くすると成功しやすくなりますが1回の待ち時間が伸び、短くすると諦めて再試行ボタンを出すのが早くなります（10〜600秒、既定'+POLLINATIONS_TIMEOUT_SEC_DEFAULT+'秒）。無制限にはできません（万一Pollinations側が本当に応答しない場合、画面が永久に「生成中」のまま固まってしまうため）</div>'
     +   '<div class="hint">共有・他人と使う端末では開発者ツール等から読み取れてしまう点にご注意ください。</div>'
