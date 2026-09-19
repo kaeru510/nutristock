@@ -804,9 +804,11 @@ function ingredientRowHtml(ing){
 }
 
 /* shared low-level caller for every Gemini text/vision request in the app (photo analysis,
-   icon guessing, meal suggestions). Centralizes the retry-on-503 + hard-timeout + error-code
-   mapping logic that would otherwise be copy-pasted at every call site (it already was, twice,
-   before this refactor — see NOTES.md). Returns { ok:true, text } or { ok:false, code }. */
+   icon guessing, meal suggestions, recipe lookup). Centralizes the retry-on-503 + hard-timeout
+   + error-code mapping logic that would otherwise be copy-pasted at every call site (it already
+   was, twice, before this refactor — see NOTES.md). opts.tools passes through to the request
+   verbatim (e.g. [{googleSearch:{}}]) for callers that need grounding. Returns
+   { ok:true, text, groundingMetadata } or { ok:false, code }. */
 async function callGeminiText(promptText, opts){
   opts = opts || {};
   if(!hasGeminiKey()) return { ok:false, code:"invalid_key" };
@@ -815,7 +817,8 @@ async function callGeminiText(promptText, opts){
   if(opts.image) parts.push({ inlineData: { mimeType: opts.image.mimeType, data: opts.image.data } });
   var requestBody = JSON.stringify({
     contents: [{ parts: parts }],
-    generationConfig: { maxOutputTokens: opts.maxOutputTokens || 1024 }
+    generationConfig: { maxOutputTokens: opts.maxOutputTokens || 1024 },
+    tools: opts.tools || undefined
   });
   var res = null;
   var timedOut = false;
@@ -861,7 +864,7 @@ async function callGeminiText(promptText, opts){
   (cParts||[]).forEach(function(part){ if(part.text) text += part.text; });
   var usage = data.usageMetadata || {};
   logGeminiUsage({ ts: Date.now(), model: geminiModel, ok: true, promptTokens: usage.promptTokenCount||0, outputTokens: usage.candidatesTokenCount||0 });
-  return { ok:true, text: text };
+  return { ok:true, text: text, groundingMetadata: candidate && candidate.groundingMetadata };
 }
 
 /* Pollinations.ai (https://pollinations.ai) — free, no API key, no signup, CORS-open.
@@ -1040,6 +1043,7 @@ function toggleFavoriteDish(dish){
   } else {
     var saved = Object.assign({}, dish);
     delete saved.imageDataUrl; delete saved.imageLoading;
+    if(saved.recipe && saved.recipe.status==="loading") delete saved.recipe; /* mid-fetch when favorited — nothing left to resolve it, so drop rather than persist a stuck spinner */
     saved.savedAt = Date.now();
     state.favoriteDishes.unshift(saved);
     if(state.favoriteDishes.length>20) state.favoriteDishes.length = 20;
@@ -1082,6 +1086,62 @@ async function generateImageForSuggestedDish(idx){
   d.imageLoading = false;
   d.imageDataUrl = url;
   if(!url) showToast("画像を生成できませんでした");
+  renderHome();
+}
+
+function recipeButtonHtml(d, idx, source){
+  var label = (d.recipe && d.recipe.status==="loading") ? "📖 検索中…"
+    : (d.recipe && d.recipe.status==="done") ? "📖 レシピを再取得"
+    : "📖 レシピを見る";
+  return '<button type="button" class="btn ghost small recipe-btn" data-idx="'+idx+'" data-source="'+source+'"'+(d.recipe&&d.recipe.status==="loading"?" disabled":"")+'>'+label+'</button>';
+}
+function recipeDisplayHtml(d){
+  if(!d.recipe) return "";
+  if(d.recipe.status==="error") return '<div class="hint" style="margin-top:8px;color:var(--crit)">'+escapeAttr(d.recipe.error||"")+'</div>';
+  if(d.recipe.status!=="done") return "";
+  var stepsHtml = (d.recipe.steps||[]).map(function(s){ return '<li>'+escapeAttr(s)+'</li>'; }).join("");
+  var sourceHtml = (d.recipe.source && d.recipe.source.type==="web")
+    ? '<div class="hint" style="margin-top:4px">出典: <a href="'+escapeAttr(d.recipe.source.url)+'" target="_blank" rel="noopener">'+escapeAttr(d.recipe.source.name||d.recipe.source.url)+'</a></div>'
+    : '<div class="hint" style="margin-top:4px">※実際のレシピサイトが見つからなかったため、AIが一般的な知識から作成した手順です（特定サイトからの引用ではありません）</div>';
+  return '<ol style="margin:8px 0 0;padding-left:20px;font-size:12.5px;color:var(--ink-2);line-height:1.7">'+stepsHtml+'</ol>' + sourceHtml;
+}
+/* button-triggered only, same "never automatic" policy as image generation. Uses Google
+   Search grounding (tools:[{googleSearch:{}}]) so Gemini can find a real published recipe
+   (クラシル等) instead of relying on its own memorized/possibly-wrong knowledge of the dish.
+   Whether to label the result "web" vs "ai_generated" is decided from the response's actual
+   groundingMetadata, never from what the model claims in its own JSON — a model asked to
+   self-report whether it searched is exactly the kind of claim that can't be trusted; the
+   grounding metadata is a separate, structurally distinct field Google populates only when
+   a real search genuinely ran. */
+async function fetchRecipeForDish(source, idx){
+  var d = source==="fav" ? state.favoriteDishes[idx] : aiSuggestUi.dishes[idx];
+  if(!d || (d.recipe && d.recipe.status==="loading")) return;
+  d.recipe = { status:"loading", steps:[], source:null, error:"" };
+  renderHome();
+  var prompt = "「"+d.name+"」という料理の作り方の手順を、日本語の箇条書きで教えてください。可能であればWeb検索でクラシル(kurashiru.com)等の実際に公開されているレシピサイトを参照し、その手順をできるだけ反映してください。参考になる情報が見つからない場合は、一般的な家庭料理の知識をもとに手順を考えてください。\n"
+    + "次のJSON形式のみで回答してください。前後の説明文やマークダウンのコードブロックは書かないでください。\n"
+    + '{"steps":["手順1の説明文","手順2の説明文","手順3の説明文", ...]}';
+  var result = await callGeminiText(prompt, { maxOutputTokens: 1200, tools: [{googleSearch:{}}] });
+  if(!result.ok){
+    d.recipe = { status:"error", steps:[], source:null, error: PHOTO_ERROR_MESSAGES[result.code] || PHOTO_ERROR_MESSAGES.network_error };
+    renderHome();
+    return;
+  }
+  try{
+    var cleaned = result.text.trim().replace(/^```[a-zA-Z]*\n?/,"").replace(/```\s*$/,"").trim();
+    var parsed = JSON.parse(cleaned);
+    var steps = Array.isArray(parsed.steps) ? parsed.steps.slice(0,15).map(function(s){ return String(s).slice(0,200); }).filter(Boolean) : [];
+    var chunks = (result.groundingMetadata && result.groundingMetadata.groundingChunks) || [];
+    var firstSource = chunks.find(function(c){ return c.web && c.web.uri; });
+    d.recipe = {
+      status: steps.length ? "done" : "error",
+      steps: steps,
+      source: firstSource ? { type:"web", name: firstSource.web.title||"", url: firstSource.web.uri } : { type:"ai_generated" },
+      error: steps.length ? "" : "レシピを取得できませんでした。もう一度お試しください。"
+    };
+  }catch(e){
+    d.recipe = { status:"error", steps:[], source:null, error: PHOTO_ERROR_MESSAGES.invalid_json };
+  }
   renderHome();
 }
 
@@ -1533,9 +1593,11 @@ function renderHome(){
           + '</details>'
           + '<div class="d">'+escapeAttr(d.reason)+'</div>'
           + (d.imageDataUrl ? '<img src="'+d.imageDataUrl+'" style="width:100%;border-radius:10px;margin-top:8px;display:block">' : '')
+          + recipeDisplayHtml(d)
           + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;flex-wrap:wrap">'
           +   '<button type="button" class="btn small ai-suggest-log-btn" data-idx="'+idx+'">これを記録する</button>'
           +   '<button type="button" class="btn ghost small ai-suggest-fav-btn" data-idx="'+idx+'">'+(isFavoriteDish(d.name)?"⭐ 保存済み":"☆ お気に入り")+'</button>'
+          +   recipeButtonHtml(d, idx, "ai")
           +   (imageGenEnabled ? '<button type="button" class="btn ghost small ai-suggest-img-btn" data-idx="'+idx+'"'+(d.imageLoading?" disabled":"")+'>'+(d.imageLoading?"🎨 生成中…":(d.imageDataUrl?"🎨 再生成":"🎨 画像を生成"))+'</button>' : '')
           + '</div>'
           + '</div></div>';
@@ -1584,8 +1646,10 @@ function renderHome(){
           return '<div class="suggest-card"><div class="ic">⭐</div><div style="flex:1;min-width:0">'
             + '<div class="t">'+escapeAttr(d.name)+'</div>'
             + '<div class="d">'+escapeAttr(d.reason||"")+'</div>'
-            + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px">'
+            + recipeDisplayHtml(d)
+            + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;flex-wrap:wrap">'
             +   '<button type="button" class="btn small fav-log-btn" data-idx="'+idx+'">これを記録する</button>'
+            +   recipeButtonHtml(d, idx, "fav")
             +   '<button type="button" class="btn ghost small fav-remove-btn" data-idx="'+idx+'">削除</button>'
             + '</div>'
             + '</div></div>';
@@ -1646,6 +1710,11 @@ function renderHome(){
     btn.addEventListener("click", function(){
       state.favoriteDishes.splice(parseInt(btn.dataset.idx, 10), 1);
       persist(["favoriteDishes"]); renderAll();
+    });
+  });
+  el.querySelectorAll(".recipe-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      fetchRecipeForDish(btn.dataset.source, parseInt(btn.dataset.idx, 10));
     });
   });
 }
