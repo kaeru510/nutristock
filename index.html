@@ -772,6 +772,12 @@ function geminiPhotoItemsFromResponseText(text, validPantryIds){
       var matchedPantryId = ing.matchedPantryId && validPantryIds.indexOf(ing.matchedPantryId)>=0 ? ing.matchedPantryId : null;
       return {
         name: String(ing.name||"").slice(0,40),
+        /* English name (added 2026-09-19, user's request) — used only to build the
+           Pollinations image prompt below. Flux mostly ignores Japanese text (see
+           generateImageForSuggestedDish), so listing the Japanese `name` verbatim in that
+           prompt wouldn't actually constrain the image; this gives the image model
+           something it can read. */
+        nameEn: String(ing.nameEn||"").slice(0,40),
         estimatedGrams: Number(ing.estimatedGrams)||0,
         matchedPantryId: matchedPantryId
       };
@@ -1206,7 +1212,19 @@ async function generateImageForSuggestedDish(idx){
      the bare-name template is only a fallback for older favorites saved before this field
      existed. */
   var visual = d.imagePromptEn || ("a Japanese home-cooked dish called \""+d.name+"\"");
-  var prompt = "A professional, appetizing food photograph of " + visual + ", beautifully plated on a clean dinner table, natural lighting, realistic food photography style, no text or logos in the image.";
+  /* Explicit ingredient list + negative instruction (added 2026-09-19, user's report: the
+     generated image sometimes shows things not in the dish's own ingredient list). Before
+     this, the ONLY signal about ingredients reaching Pollinations was however well (or
+     poorly) Gemini's own imagePromptEn paraphrased them — a second, indirect hop where
+     drift could creep in. Listing the structured ingredient names directly, plus a hard "no
+     other ingredients" instruction, gives the image model an explicit closed set instead of
+     relying entirely on the prose description staying faithful. English names specifically
+     (see nameEn in geminiPhotoItemsFromResponseText) — Flux mostly ignores Japanese text. */
+  var ingredientNamesEn = (d.ingredients||[]).map(function(ing){ return ing.nameEn; }).filter(Boolean);
+  var ingredientClause = ingredientNamesEn.length
+    ? " The dish contains exactly these ingredients: " + ingredientNamesEn.join(", ") + ". Do not depict any other ingredients or food items besides these."
+    : "";
+  var prompt = "A professional, appetizing food photograph of " + visual + "." + ingredientClause + " Beautifully plated on a clean dinner table, natural lighting, realistic food photography style, no text or logos in the image.";
   var url = null;
   for(var attempt=1; attempt<=POLLINATIONS_MAX_ATTEMPTS; attempt++){
     d.imageAttemptNum = attempt;
@@ -1401,7 +1419,7 @@ async function runAiSuggestions(){
     + "この在庫を使って作れる具体的な料理をちょうど"+dishCount+"つ提案してください。特に賞味期限が近い食材を優先的に使う組み合わせを考えてください。\n"
     + "各料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、実際にその料理を作るのに必要な主要な材料（調味料も含めてよい）を挙げ、それぞれが上記在庫の中にあるかどうか判定してください。\n"
     + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
-    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}],"imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(画像生成AIへの指示文として使うため、料理名の日本語表記には頼らないこと)。最重要: 直前のingredientsで列挙した具体的な材料が画像にもそのまま写っていることが伝わるように、それぞれの色・形・切り方を明示して書くこと(一般的なその料理のイメージではなく、今回のingredientsの内容そのものを描写する)。例えば具材が鶏肉と大根なら、鶏肉や大根が実際に見えるように書き、無関係な具材を想像で足さないこと。例:\"a bowl of simmered chicken and daikon radish in soy sauce, tender chicken pieces, translucent white daikon chunks, glossy brown broth, dark ceramic bowl\")"}]\n'
+    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","nameEn":"材料名の英語表記(1〜3単語程度。例:chicken breast, carrot, soy sauce)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}],"imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(画像生成AIへの指示文として使うため、料理名の日本語表記には頼らないこと)。最重要: 直前のingredientsで列挙した具体的な材料が画像にもそのまま写っていることが伝わるように、それぞれの色・形・切り方を明示して書くこと(一般的なその料理のイメージではなく、今回のingredientsの内容そのものを描写する)。例えば具材が鶏肉と大根なら、鶏肉や大根が実際に見えるように書き、無関係な具材を想像で足さないこと。例:\"a bowl of simmered chicken and daikon radish in soy sauce, tender chicken pieces, translucent white daikon chunks, glossy brown broth, dark ceramic bowl\")"}]\n'
     + "数値はすべて概算で構いません。在庫だけで無理に完結させず、一般的なレシピとして自然な材料を挙げてください（在庫に無い調味料等が混ざるのは自然です）。ただし主役の食材はできるだけ在庫にあるものを使ってください。imagePromptEnは必ずingredientsに列挙した材料と一致させ、そこに無い食材を描写に含めないでください。";
   await runDishSuggestionQuery(prompt);
 }
@@ -1437,7 +1455,7 @@ async function runIngredientSuggestion(){
     + namesQuoted+"を主役級の食材として使う、具体的な料理をちょうど"+dishCount+"つ提案してください。"+namesList+"は、これから提案する料理群**全体**の中でそれぞれ最低1回は使ってください（1つの料理に無理に全部詰め込む必要はなく、複数の料理に分けて使っても構いません。同じ料理で複数の指定食材を組み合わせるのも歓迎です）。他の在庫食材（特に賞味期限が近いもの）を補助的に組み合わせるのも歓迎します。\n"
     + "各料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、実際にその料理を作るのに必要な主要な材料（調味料も含めてよい）を挙げ、それぞれが上記在庫の中にあるかどうか判定してください。\n"
     + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
-    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特に指定した食材をどう活かすか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}],"imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(画像生成AIへの指示文として使うため、料理名の日本語表記には頼らないこと)。最重要: 直前のingredientsで列挙した具体的な材料が画像にもそのまま写っていることが伝わるように、それぞれの色・形・切り方を明示して書くこと。例:\"a bowl of simmered chicken and daikon radish in soy sauce, tender chicken pieces, translucent white daikon chunks, glossy brown broth, dark ceramic bowl\")"}]\n'
+    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特に指定した食材をどう活かすか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","nameEn":"材料名の英語表記(1〜3単語程度。例:chicken breast, carrot, soy sauce)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}],"imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(画像生成AIへの指示文として使うため、料理名の日本語表記には頼らないこと)。最重要: 直前のingredientsで列挙した具体的な材料が画像にもそのまま写っていることが伝わるように、それぞれの色・形・切り方を明示して書くこと。例:\"a bowl of simmered chicken and daikon radish in soy sauce, tender chicken pieces, translucent white daikon chunks, glossy brown broth, dark ceramic bowl\")"}]\n'
     + "数値はすべて概算で構いません。指定した食材は必ずいずれかの提案で使ってください。それ以外は一般的なレシピとして自然な材料を挙げて構いません（在庫に無い調味料等が混ざるのは自然です）。imagePromptEnは必ずingredientsに列挙した材料と一致させ、そこに無い食材を描写に含めないでください。";
   await runDishSuggestionQuery(prompt);
 }
@@ -1873,13 +1891,22 @@ function renderHome(){
         var imageBtn = (imageGenEnabled && !d.imageLoading && !aiSuggestUi.imageGenBatchInProgress)
           ? '<button type="button" class="btn ghost small ai-suggest-img-btn" data-idx="'+idx+'">'+(d.imageDataUrl?"🔄 別の画像に":(d.imageAttempted?"🎨 再試行":"🎨 画像を生成"))+'</button>'
           : '';
+        /* Section label style matches the existing .field label convention (small, muted,
+           bold, letter-spaced) so these read as the same kind of heading used elsewhere in
+           the app rather than a one-off. */
+        var sectionLabel = function(text){ return '<div style="font-size:11.5px;color:var(--ink-3);font-weight:700;letter-spacing:.02em;margin-top:10px">'+text+'</div>'; };
         return '<div class="suggest-card"><div class="ic">🍳</div><div style="flex:1;min-width:0">'
+          /* Order (2026-09-19, user's request): 説明→材料→レシピ→画像, each section labeled.
+             Dish name stays as the <summary> — tapping it still lazily fetches the recipe
+             (see the toggle listener) — everything else moved inside so it only renders once
+             expanded, matching how 材料/レシピ already worked. */
           + '<details class="meal-detail ai-suggest-detail" data-idx="'+idx+'"'+(d.detailOpen?" open":"")+'><summary class="t">'+escapeAttr(d.name)+'</summary>'
-          +   '<div class="ingredient-detail-list" style="margin-top:6px">'+ingredientsHtml+'</div>'
-          +   (d.recipe && d.recipe.status==="loading" ? '<div class="hint" style="margin-top:8px">📖 レシピを検索中…</div>' : recipeDisplayHtml(d))
+          +   sectionLabel('料理の説明') + '<div class="d" style="margin-top:2px">'+escapeAttr(d.reason)+'</div>'
+          +   sectionLabel('材料') + '<div class="ingredient-detail-list" style="margin-top:6px">'+ingredientsHtml+'</div>'
+          +   sectionLabel('レシピ') + (d.recipe && d.recipe.status==="loading" ? '<div class="hint" style="margin-top:6px">📖 レシピを検索中…</div>' : recipeDisplayHtml(d))
           + '</details>'
-          + '<div class="d">'+escapeAttr(d.reason)+'</div>'
-          + '<div style="margin-top:8px">'+imageBlock+'</div>'
+          + (imageBlock ? sectionLabel('画像') : '')
+          + '<div style="margin-top:4px">'+imageBlock+'</div>'
           + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;flex-wrap:wrap">'
           +   '<button type="button" class="btn small ai-suggest-log-btn" data-idx="'+idx+'">これを記録する</button>'
           +   '<button type="button" class="btn ghost small ai-suggest-fav-btn" data-idx="'+idx+'">'+(isFavoriteDish(d.name)?"⭐ 保存済み":"☆ お気に入り")+'</button>'
