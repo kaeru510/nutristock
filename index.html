@@ -1161,11 +1161,13 @@ function runQueuedPollinationsRequest(fn){
   return run;
 }
 
-/* Runs automatically for every dish right after a suggestion batch loads (when
-   imageGenEnabled), via generateAllSuggestedDishImages() below — also reused for the
-   manual "🔄 別の画像に" / "🎨 再試行" button on a single dish. Pollinations.ai is free and
-   doesn't touch the Gemini quota, so auto-generating one image per suggested dish costs
-   nothing in tokens even though it's no longer opt-in per dish. */
+/* Triggered per-dish by the manual "🎨 画像を生成" / "🔄 別の画像に" / "🎨 再試行" button (see
+   the imageBtn markup in renderHome). Automatic generation for every suggested dish was
+   tried and then reverted 2026-09-19 — see generateAllSuggestedDishImages below and
+   NOTES.md — because bursting up to 4 requests within about a minute made this app itself
+   more likely to trip Pollinations' per-IP/per-minute limits than one-at-a-time manual
+   clicks, on top of the service's own congestion. Pollinations.ai is free and doesn't
+   touch the Gemini quota either way. */
 async function generateImageForSuggestedDish(idx){
   var d = aiSuggestUi.dishes[idx];
   if(!d || d.imageLoading) return;
@@ -1200,16 +1202,14 @@ async function generateImageForSuggestedDish(idx){
   renderHome();
 }
 
-/* Fires once per suggestion batch (see runAiSuggestions), one dish at a time. This was
-   briefly changed to Promise.all (fire all dishes at once) to cut total wait time, but
-   real error payloads captured from the app (not a synthetic curl test) showed Pollinations
-   enforces a hard "max 1 in-flight request per IP" queue: `"message":"Queue full for
-   IP: ...: 1 requests already queued (max: 1)"`. Firing in parallel meant only one of N
-   dishes could ever be accepted — the rest got an instant 429. So parallel wasn't just
-   unhelpful, it was actively worse. Reverted to sequential, which is the only way to stay
-   under that per-IP limit; the 30s timeout + 1.5s pause + 30s retry in
-   generateDishImageDataUrl above still means total wait scales with dish count, but that's
-   an inherent tradeoff of a free, unauthenticated, single-slot-per-IP service. */
+/* Currently unused — runAiSuggestions no longer calls this (see 2026-09-19 revert to manual
+   generation, NOTES.md). Kept rather than deleted since going back to auto-for-all-dishes
+   is exactly the kind of thing that might get re-tried; wiring it back in is a one-line
+   change (`generateAllSuggestedDishImages();` in runAiSuggestions) if that experiment
+   returns. Was itself already fixed once from Promise.all (fire all dishes at once) back to
+   this sequential for+await, after real error payloads showed Pollinations enforces a hard
+   "max 1 in-flight request per IP" queue: `"message":"Queue full for IP: ...: 1 requests
+   already queued (max: 1)"` — parallel meant only one of N dishes could ever be accepted. */
 async function generateAllSuggestedDishImages(){
   var dishes = aiSuggestUi.dishes;
   for(var i=0;i<dishes.length;i++){
@@ -1328,7 +1328,12 @@ async function runAiSuggestions(){
   }
   renderHome();
   if(imageGenEnabled && aiSuggestUi.dishes.length){
-    generateAllSuggestedDishImages();
+    /* Auto-generating all dishes at once was reverted 2026-09-19 (see NOTES.md): bursting
+       up to 4 requests within ~1 minute made this app itself far more likely to trip
+       Pollinations' per-IP concurrency=1 / per-minute rate limits than the original
+       one-click-at-a-time manual flow ever did, on top of whatever the service's own
+       congestion is doing. Back to manual — the health check below still runs so the
+       congestion banner is informative even before the user taps a button. */
     checkPollinationsHealth().then(function(h){ aiSuggestUi.pollinationsHealth = h; renderHome(); });
     startPollinationsHealthPolling();
   }
@@ -2675,7 +2680,7 @@ function renderSettings(){
     +   '<div class="field"><label>使用モデル</label><select id="ak_model">'
     +     GEMINI_MODEL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(geminiModel===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
     +   '</select><div class="hint">503エラーが頻発する場合は、別のモデルに切り替えると改善することがあります（無料枠のレート制限がモデルごとに別枠のため）</div></div>'
-    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめが出たとき、各料理の画像を自動生成する（Pollinations.aiの無料サービスを利用・APIキー不要・Gemini利用枠は消費しません。生成画像には小さな透かしが入ります）</label>'
+    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめに画像生成ボタンを表示する（Pollinations.aiの無料サービスを利用・APIキー不要・Gemini利用枠は消費しません。生成画像には小さな透かしが入ります）</label>'
     +   '<div class="hint">共有・他人と使う端末では開発者ツール等から読み取れてしまう点にご注意ください。</div>'
     +   '<div class="form-actions"><button type="button" id="ak_clear" class="btn ghost small">削除</button><button type="submit" class="btn small">保存</button></div>'
     + '</form>'
