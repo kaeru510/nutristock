@@ -1123,6 +1123,16 @@ async function fetchRecipeForDish(source, idx){
     + "次のJSON形式のみで回答してください。前後の説明文やマークダウンのコードブロックは書かないでください。\n"
     + '{"steps":["手順1の説明文","手順2の説明文","手順3の説明文", ...]}';
   var result = await callGeminiText(prompt, { maxOutputTokens: 1200, tools: [{googleSearch:{}}] });
+  var usedSearch = true;
+  if(!result.ok && (result.code==="rate_limited" || result.code==="server_overloaded")){
+    /* Google Search grounding has its own, much smaller quota, entirely separate from plain
+       text generation — hitting it doesn't mean the API key or model is unusable, only that
+       this one capability is temporarily out. Retry the same question without the tool so
+       the viewer still gets a usable, honestly-labeled AI-generated recipe instead of a hard
+       failure. Never retried for invalid_key — a bad key won't be fixed by dropping a tool. */
+    usedSearch = false;
+    result = await callGeminiText(prompt, { maxOutputTokens: 1200 });
+  }
   if(!result.ok){
     d.recipe = { status:"error", steps:[], source:null, error: PHOTO_ERROR_MESSAGES[result.code] || PHOTO_ERROR_MESSAGES.network_error };
     renderHome();
@@ -1132,7 +1142,7 @@ async function fetchRecipeForDish(source, idx){
     var cleaned = result.text.trim().replace(/^```[a-zA-Z]*\n?/,"").replace(/```\s*$/,"").trim();
     var parsed = JSON.parse(cleaned);
     var steps = Array.isArray(parsed.steps) ? parsed.steps.slice(0,15).map(function(s){ return String(s).slice(0,200); }).filter(Boolean) : [];
-    var chunks = (result.groundingMetadata && result.groundingMetadata.groundingChunks) || [];
+    var chunks = (usedSearch && result.groundingMetadata && result.groundingMetadata.groundingChunks) || [];
     var firstSource = chunks.find(function(c){ return c.web && c.web.uri; });
     d.recipe = {
       status: steps.length ? "done" : "error",
