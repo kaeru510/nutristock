@@ -2165,8 +2165,16 @@ function rowItemHtml(p, showActions){
   var b = expiryBadge(d);
   var f = FOOD_BY_KEY[p.foodKey];
   var icon = p.icon || CAT_ICON[p.category] || "🍽️";
+  /* "－1" is a discrete "used one of these" gesture — meaningless for g/ml stock, where
+     subtracting a literal 1g/1ml barely moves the number and (by design, see
+     addToShoppingListIfLow) never triggers the low-stock shopping-list nudge either. Hiding
+     it for g/ml (2026-09-19, user-reported: pressing it never added the item to the
+     shopping list) leaves only 🗑, which already correctly adds to the list regardless of
+     unit. Real g/ml consumption still happens via deductPantryForConsumption when a meal is
+     logged with an estimated amount. */
+  var isCountUnit = p.unit!=="g" && p.unit!=="ml";
   var actions = showActions
-    ? '<button class="btn ghost small minus-btn" data-id="'+p.id+'" title="1つ使った">－1</button>'
+    ? (isCountUnit ? '<button class="btn ghost small minus-btn" data-id="'+p.id+'" title="1つ使った">－1</button>' : '')
       + '<button class="btn ghost small consume-btn" data-id="'+p.id+'" title="残り全部を使い切った/廃棄した">🗑</button>'
     : "";
   return '<div class="row-item" data-id="'+p.id+'">'
