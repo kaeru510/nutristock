@@ -960,13 +960,16 @@ async function generateDishImageDataUrl(promptText){
      tapping it later gives the stuck slot actual time to clear. */
   try{
     var controller = new AbortController();
-    /* 20s, not 30s: with the per-IP "max 1 in-flight request" limit (see NOTES.md), dishes
-       are generated strictly one at a time, so every second spent waiting on a stuck
-       request here is a second every later dish just sits idle. A request that's going to
-       hang usually never responds at all rather than responding slowly, so cutting the
-       timeout mostly just fails faster without giving up on requests that were actually
-       about to succeed. */
-    var timeoutId = setTimeout(function(){ controller.abort(); }, 20000);
+    /* TEMPORARY DIAGNOSTIC (2026-09-19): bumped from 20s to 90s to answer an open question —
+       does a "stuck" request (no response at all) ever actually come back if given more
+       time, or is Pollinations' backend genuinely dropping/never-processing it? Every
+       observed case so far either succeeded quickly (2-15s) or was still silent at the old
+       20s cutoff — nothing has ever been seen completing in between, so 20s never actually
+       tested whether patience pays off. Only matters now because generation reverted to
+       manual/one-at-a-time (see NOTES.md) — a single click waiting up to 90s is an
+       acceptable one-off cost that a 4-dish automatic burst never was. Revert to a shorter
+       value once this question is answered either way. */
+    var timeoutId = setTimeout(function(){ controller.abort(); }, 90000);
     var res = await fetch(url, { signal: controller.signal });
     clearTimeout(timeoutId);
     if(res.ok){
