@@ -881,33 +881,39 @@ async function generateDishImageDataUrl(promptText){
   var seed = Math.floor(Math.random()*1000000);
   var url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(promptText)
     + "?width=768&height=768&nologo=true&model=flux&referrer=nutristock&seed=" + seed;
-  for(var attempt=0; attempt<2; attempt++){
-    try{
-      var controller = new AbortController();
-      /* 20s, not 30s: with the per-IP "max 1 in-flight request" limit (see NOTES.md),
-         dishes are generated strictly one at a time, so every second spent waiting on a
-         stuck request here is a second every later dish just sits idle. A request that's
-         going to hang usually never responds at all rather than responding slowly, so
-         cutting the timeout mostly just fails faster without giving up on requests that
-         were actually about to succeed. */
-      var timeoutId = setTimeout(function(){ controller.abort(); }, 20000);
-      var res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if(res.ok){
-        var blob = await res.blob();
-        return await new Promise(function(resolve){
-          var reader = new FileReader();
-          reader.onload = function(){ resolve(reader.result); };
-          reader.onerror = function(){ resolve(null); };
-          reader.readAsDataURL(blob);
-        });
-      }
-      var errBody = await res.text().catch(function(){ return ""; });
-      console.log("[NutriStock] 画像生成(Pollinations): レスポンスNG", res.status, errBody);
-    }catch(e){
-      console.log("[NutriStock] 画像生成(Pollinations): fetch自体が失敗", e);
+  /* Single attempt, no automatic retry (removed 2026-09-19). Real error payloads captured
+     from the app showed that when a request times out client-side (our own AbortController
+     firing), Pollinations' server doesn't actually free the per-IP "1 in-flight" slot just
+     because we gave up waiting — the aborted job is still occupying it. So an immediate
+     retry doesn't get a fresh attempt, it just bounces off the same still-occupied slot
+     with an instant 429 "Queue full" — confirmed in every retry seen in testing, none
+     succeeded. Retrying was pure wasted time (up to another ~21.5s) for a near-guaranteed
+     failure. The manual "🎨 再試行" button on each dish remains as the real retry path —
+     tapping it later gives the stuck slot actual time to clear. */
+  try{
+    var controller = new AbortController();
+    /* 20s, not 30s: with the per-IP "max 1 in-flight request" limit (see NOTES.md), dishes
+       are generated strictly one at a time, so every second spent waiting on a stuck
+       request here is a second every later dish just sits idle. A request that's going to
+       hang usually never responds at all rather than responding slowly, so cutting the
+       timeout mostly just fails faster without giving up on requests that were actually
+       about to succeed. */
+    var timeoutId = setTimeout(function(){ controller.abort(); }, 20000);
+    var res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if(res.ok){
+      var blob = await res.blob();
+      return await new Promise(function(resolve){
+        var reader = new FileReader();
+        reader.onload = function(){ resolve(reader.result); };
+        reader.onerror = function(){ resolve(null); };
+        reader.readAsDataURL(blob);
+      });
     }
-    if(attempt===0) await new Promise(function(r){ setTimeout(r, 1500); });
+    var errBody = await res.text().catch(function(){ return ""; });
+    console.log("[NutriStock] 画像生成(Pollinations): レスポンスNG", res.status, errBody);
+  }catch(e){
+    console.log("[NutriStock] 画像生成(Pollinations): fetch自体が失敗", e);
   }
   return null;
 }
