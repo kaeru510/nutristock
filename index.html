@@ -431,7 +431,7 @@ try{
   if(savedTimeout >= 10 && savedTimeout <= 600) pollinationsTimeoutSec = savedTimeout;
 }catch(e){}
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
-var aiSuggestUi = { status:"idle", dishes:[], error:"", pollinationsHealth:null };
+var aiSuggestUi = { status:"idle", dishes:[], error:"", pollinationsHealth:null, imageGenBatchInProgress:false };
 var receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 
 /* ---------- local usage log (NOT Google's official quota — just what this app itself has sent) ---------- */
@@ -1340,7 +1340,7 @@ async function runAiSuggestions(){
     renderHome();
     return;
   }
-  aiSuggestUi.status = "loading"; aiSuggestUi.dishes = []; aiSuggestUi.error = ""; aiSuggestUi.pollinationsHealth = null;
+  aiSuggestUi.status = "loading"; aiSuggestUi.dishes = []; aiSuggestUi.error = ""; aiSuggestUi.pollinationsHealth = null; aiSuggestUi.imageGenBatchInProgress = false;
   renderHome();
   var pantrySorted = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
   var pantryContext = pantrySorted.map(function(p){ return { id:p.id, name:p.name, qty:p.qty, unit:p.unit, daysUntilExpiry: daysUntil(p.expiry) }; });
@@ -1374,7 +1374,14 @@ async function runAiSuggestions(){
        for the full back-and-forth) once generateImageForSuggestedDish grew bounded retries
        with real spacing between attempts AND between dishes — that spacing is what the
        first attempt at auto-generation was missing, not automation itself. */
-    generateAllSuggestedDishImages();
+    aiSuggestUi.imageGenBatchInProgress = true;
+    var batchDishes = aiSuggestUi.dishes;
+    generateAllSuggestedDishImages().then(function(){
+      /* Guard against a stale callback from an abandoned batch (user hit "AIに提案してもらう"
+         again) clobbering the NEW batch's in-progress flag — only clear it if this callback
+         still belongs to the batch that's actually current. */
+      if(aiSuggestUi.dishes === batchDishes){ aiSuggestUi.imageGenBatchInProgress = false; renderHome(); }
+    });
     checkPollinationsHealth().then(function(h){ aiSuggestUi.pollinationsHealth = h; renderHome(); });
     startPollinationsHealthPolling();
   }
@@ -1801,7 +1808,14 @@ function renderHome(){
           ? '<img src="'+d.imageDataUrl+'" style="width:100%;border-radius:10px;margin-bottom:8px;display:block">'
           : (d.imageLoading ? '<div class="hint" style="margin-bottom:6px">🎨 画像を生成中…（'+(d.imageAttemptNum||1)+'/'+POLLINATIONS_MAX_ATTEMPTS+'回目）</div>'
             : (d.imageAttempted ? '<div class="hint" style="margin-bottom:6px;color:var(--crit)">画像を生成できませんでした（'+POLLINATIONS_MAX_ATTEMPTS+'回試行）</div>' : ''));
-        var imageBtn = (imageGenEnabled && !d.imageLoading)
+        /* Only shown once the whole auto-generation batch has fully settled (added
+           2026-09-19, user-diagnosed bug): a dish's image popping in mid-batch grows that
+           card's height and shifts every card below it, so a tap aimed at a button on a
+           still-loading dish can land on a different dish's button once the layout has
+           already shifted underneath it — exactly what happened when a tap meant for dish 2
+           ended up starting dish 3 instead. Hiding every image button while the batch is
+           running removes anything tappable from that shifting layout in the first place. */
+        var imageBtn = (imageGenEnabled && !d.imageLoading && !aiSuggestUi.imageGenBatchInProgress)
           ? '<button type="button" class="btn ghost small ai-suggest-img-btn" data-idx="'+idx+'">'+(d.imageDataUrl?"🔄 別の画像に":(d.imageAttempted?"🎨 再試行":"🎨 画像を生成"))+'</button>'
           : '';
         return '<div class="suggest-card"><div class="ic">🍳</div><div style="flex:1;min-width:0">'
