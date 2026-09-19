@@ -1123,6 +1123,38 @@ async function guessFoodIcon(name){
   return null;
 }
 
+var PANTRY_VALID_UNITS = ["g","ml","個","パック","本","枚","その他"];
+/* Reduces first-time barcode registration to (ideally) just quantity + expiry — the two
+   fields deliberately left to the user (added 2026-09-19, user's request). Expiry date is
+   explicitly excluded from AI guessing here even though the receipt feature already
+   estimates it from a photo: guessing a shelf life from the product name alone, with no
+   visual confirmation, was judged too risky for a field where a wrong guess could mean
+   eating something spoiled — the user was clear this one has to stay manual. Category and
+   unit carry no such risk (worst case: a mis-filed item, or a wrong count unit), so those
+   are fair game. Kept separate from guessFoodIcon (different call sites, different risk
+   profile, and the receipt feature already gets category/unit from its own extraction
+   prompt) rather than merged into one bigger call. */
+async function guessFoodCategoryAndUnit(name){
+  if(!hasGeminiKey() || !name) return null;
+  var catKeys = Object.keys(CAT_LABEL);
+  var prompt = "次の食品に最も適切なカテゴリと、数える単位を1つずつ推測してください。食品名: " + name + "\n"
+    + "カテゴリは次のいずれか1つだけ: " + catKeys.join(", ") + "\n"
+    + "単位は次のいずれか1つだけ: " + PANTRY_VALID_UNITS.join(", ") + "\n"
+    + "次のJSON形式のみで回答してください。前後の説明文は一切書かないでください。\n"
+    + '{"category":"カテゴリのキー","unit":"単位"}';
+  var result = await callGeminiText(prompt, { maxOutputTokens: 60, noRetry: true });
+  if(!result.ok) return null;
+  try{
+    var cleaned = result.text.trim().replace(/^```[a-zA-Z]*\n?/,"").replace(/```\s*$/,"").trim();
+    var parsed = JSON.parse(cleaned);
+    var category = catKeys.indexOf(parsed.category)!==-1 ? parsed.category : null;
+    var unit = PANTRY_VALID_UNITS.indexOf(parsed.unit)!==-1 ? parsed.unit : null;
+    return (category || unit) ? { category: category, unit: unit } : null;
+  }catch(e){
+    return null;
+  }
+}
+
 /* AI-driven version of the home tab's "tonight's suggestion" — button-triggered (never
    automatic) so opening/switching to the home tab never spends API quota by itself.
    Reuses geminiPhotoItemsFromResponseText()'s dish+ingredients shape since the prompt asks
@@ -2447,13 +2479,35 @@ function renderPantry(){
       /* first time seeing this barcode — try Open Food Facts before asking the viewer to type it in */
       noteEl.innerHTML = '<div class="barcode-note">Open Food Factsで商品を検索中…（JAN: '+escapeAttr(code)+'）</div>';
       var off = await lookupOpenFoodFacts(code);
+      /* Guesses category + unit from whatever name we end up with, so a brand-new barcode
+         doesn't leave every one of these fields for the user to fill by hand (2026-09-19,
+         user's request — explicitly NOT extended to expiry, which the user wants to keep
+         fully manual since a wrong guess there is a food-safety concern, not just an
+         inconvenience). Fire-and-forget, patches the fields in place once it resolves;
+         guarded against the field having been removed by a re-render in the meantime. */
+      function applyCategoryUnitGuess(name){
+        guessFoodCategoryAndUnit(name).then(function(guess){
+          if(!guess) return;
+          var catEl = document.getElementById("pf_customCat");
+          var unitEl = document.getElementById("pf_unit");
+          if(guess.category && catEl) catEl.value = guess.category;
+          if(guess.unit && unitEl) unitEl.value = guess.unit;
+        });
+      }
       if(off){
         document.getElementById("pf_custom").value = off.name;
         pendingBarcodeNutrition = off.nutrition100;
         noteEl.innerHTML = '<div class="barcode-note">Open Food Factsから自動入力しました（栄養情報も取得済み・JAN: '+escapeAttr(code)+'）</div>';
+        applyCategoryUnitGuess(off.name);
       } else {
-        document.getElementById("pf_custom").focus();
+        var customInput = document.getElementById("pf_custom");
+        customInput.focus();
         noteEl.innerHTML = '<div class="barcode-note">初めてのバーコードです（JAN: '+escapeAttr(code)+'）。食材名を入力すると次回から自動入力されます</div>';
+        customInput.addEventListener("blur", function onCustomNameBlur(){
+          customInput.removeEventListener("blur", onCustomNameBlur);
+          var typedName = customInput.value.trim();
+          if(typedName) applyCategoryUnitGuess(typedName);
+        });
       }
     });
   });
