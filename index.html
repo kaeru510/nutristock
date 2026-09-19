@@ -424,6 +424,12 @@ function hasGeminiKey(){ return !!geminiApiKey; }
    "generate image" button. Uses Pollinations.ai (free, no key), not Gemini. */
 var imageGenEnabled = false;
 try{ imageGenEnabled = localStorage.getItem("nutristock_imageGenEnabled") === "1"; }catch(e){}
+var POLLINATIONS_TIMEOUT_SEC_DEFAULT = 90;
+var pollinationsTimeoutSec = POLLINATIONS_TIMEOUT_SEC_DEFAULT;
+try{
+  var savedTimeout = parseInt(localStorage.getItem("nutristock_pollinationsTimeoutSec"), 10);
+  if(savedTimeout >= 10 && savedTimeout <= 600) pollinationsTimeoutSec = savedTimeout;
+}catch(e){}
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 var aiSuggestUi = { status:"idle", dishes:[], error:"", pollinationsHealth:null };
 var receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
@@ -960,14 +966,18 @@ async function generateDishImageDataUrl(promptText){
      tapping it later gives the stuck slot actual time to clear. */
   try{
     var controller = new AbortController();
-    /* 90s, confirmed correct by measurement (2026-09-19, real timestamped logs, not
+    /* Default 90s, confirmed correct by measurement (2026-09-19, real timestamped logs, not
        assumption): raised from 20s to test whether a "stuck" (no response at all) request
        would ever actually complete given enough time. It does — one observed dish took
        ~32.6s and succeeded, which the old 20s cutoff would have killed and reported as a
        failure. Only viable because generation is manual/one-at-a-time (see NOTES.md) — a
        single click occasionally waiting up to 90s is an acceptable cost that a 4-dish
-       automatic burst never was. */
-    var timeoutId = setTimeout(function(){ controller.abort(); }, 90000);
+       automatic burst never was. Made user-configurable (settings tab) since there's no
+       single right answer: longer risks the UI looking permanently stuck if Pollinations
+       truly never responds to a lost job; shorter risks aborting a request that was
+       genuinely about to succeed. Never fully unbounded — an infinite wait with no way to
+       fail and show a retry button would be worse than either tradeoff. */
+    var timeoutId = setTimeout(function(){ controller.abort(); }, pollinationsTimeoutSec*1000);
     var res = await fetch(url, { signal: controller.signal });
     clearTimeout(timeoutId);
     if(res.ok){
@@ -1728,11 +1738,24 @@ function renderHome(){
       aiBody = '<div class="hint" style="margin-top:10px;color:var(--crit)">'+aiSuggestUi.error+'</div>';
     } else if(aiSuggestUi.status==="done" && aiSuggestUi.dishes.length){
       var health = aiSuggestUi.pollinationsHealth;
-      var healthNote = (imageGenEnabled && health && health.successRate < 0.6)
-        ? '<div class="hint" style="margin-top:10px;color:var(--warn-ink);background:var(--warn-soft);padding:8px 12px;border-radius:10px">'
-          + '⚠️ 画像生成サービス(Pollinations.ai)が現在混雑しています（直近の成功率 約'+Math.round(health.successRate*100)+'%）。画像がうまく生成できないことがあります。'
-          + '</div>'
-        : '';
+      var healthNote = "";
+      if(imageGenEnabled && health){
+        /* A raw "success rate %" reads like a probability you might lose, which isn't a
+           useful mental model for a one-off manual click. A traffic-light label is a more
+           direct answer to "is it worth trying right now" — the number is still shown for
+           anyone who wants the detail, just not leading. Thresholds are a judgment call, not
+           derived from anything Pollinations documents. We can't show the *time window* this
+           rate covers (Pollinations doesn't document it, and the raw total_requests count
+           observed live actually goes down between polls sometimes — consistent with some
+           kind of rolling window, but not enough evidence to state a specific duration
+           without guessing) — the ratio itself stays meaningful regardless. */
+        var pct = Math.round(health.successRate*100);
+        var tone = health.successRate>=0.8 ? "good" : health.successRate>=0.5 ? "warn" : "crit";
+        var label = health.successRate>=0.8 ? "🟢 空いています" : health.successRate>=0.5 ? "🟡 やや混雑しています" : "🔴 かなり混雑しています";
+        healthNote = '<div class="hint" style="margin-top:10px;color:var(--'+tone+'-ink);background:var(--'+tone+'-soft);padding:8px 12px;border-radius:10px">'
+          + '画像生成サービス(Pollinations.ai): '+label+'（参考: 直近の成功率 約'+pct+'%）'
+          + '</div>';
+      }
       aiBody = healthNote + '<div class="suggest-list" style="margin-top:10px">' + aiSuggestUi.dishes.map(function(d, idx){
         var ingredientsHtml = (d.ingredients||[]).map(function(ing){
           var has = !!ing.matchedPantryId;
@@ -2682,6 +2705,8 @@ function renderSettings(){
     +     GEMINI_MODEL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(geminiModel===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
     +   '</select><div class="hint">503エラーが頻発する場合は、別のモデルに切り替えると改善することがあります（無料枠のレート制限がモデルごとに別枠のため）</div></div>'
     +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめに画像生成ボタンを表示する（Pollinations.aiの無料サービスを利用・APIキー不要・Gemini利用枠は消費しません。生成画像には小さな透かしが入ります）</label>'
+    +   '<div class="field"><label>画像生成のタイムアウト(秒)</label><input id="ak_imgtimeout" type="number" min="10" max="600" step="5" value="'+pollinationsTimeoutSec+'"></div>'
+    +   '<div class="hint">Pollinations.aiが混雑していると無応答のまま詰まることがあります。長くすると成功しやすくなりますが1回の待ち時間が伸び、短くすると諦めて再試行ボタンを出すのが早くなります（10〜600秒、既定'+POLLINATIONS_TIMEOUT_SEC_DEFAULT+'秒）。無制限にはできません（万一Pollinations側が本当に応答しない場合、画面が永久に「生成中」のまま固まってしまうため）</div>'
     +   '<div class="hint">共有・他人と使う端末では開発者ツール等から読み取れてしまう点にご注意ください。</div>'
     +   '<div class="form-actions"><button type="button" id="ak_clear" class="btn ghost small">削除</button><button type="submit" class="btn small">保存</button></div>'
     + '</form>'
@@ -2767,6 +2792,9 @@ function renderSettings(){
     try{ localStorage.setItem("nutristock_geminiModel", geminiModel); }catch(e){}
     imageGenEnabled = document.getElementById("ak_imagegen").checked;
     try{ localStorage.setItem("nutristock_imageGenEnabled", imageGenEnabled ? "1" : "0"); }catch(e){}
+    var timeoutInput = parseInt(document.getElementById("ak_imgtimeout").value, 10);
+    pollinationsTimeoutSec = (timeoutInput>=10 && timeoutInput<=600) ? timeoutInput : POLLINATIONS_TIMEOUT_SEC_DEFAULT;
+    try{ localStorage.setItem("nutristock_pollinationsTimeoutSec", String(pollinationsTimeoutSec)); }catch(e){}
     showToast(geminiApiKey ? "APIキー・設定を保存しました" : "APIキーを削除しました");
     renderAll();
   });
