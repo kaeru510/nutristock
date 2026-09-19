@@ -431,7 +431,7 @@ try{
   if(savedTimeout >= 10 && savedTimeout <= 600) pollinationsTimeoutSec = savedTimeout;
 }catch(e){}
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
-var aiSuggestUi = { status:"idle", dishes:[], error:"", pollinationsHealth:null, imageGenBatchInProgress:false };
+var aiSuggestUi = { status:"idle", dishes:[], error:"", pollinationsHealth:null, imageGenBatchInProgress:false, mode:"pantry", selectedIngredientId:null };
 var receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 
 /* ---------- local usage log (NOT Google's official quota — just what this app itself has sent) ---------- */
@@ -1332,32 +1332,12 @@ async function fetchRecipeForDish(source, idx){
   renderHome();
 }
 
-async function runAiSuggestions(){
-  stopPollinationsHealthPolling();
-  if(!hasGeminiKey()){
-    aiSuggestUi.status = "error";
-    aiSuggestUi.error = "設定タブでGemini APIキーを登録してください。";
-    renderHome();
-    return;
-  }
-  if(!state.pantry.length){
-    aiSuggestUi.status = "error";
-    aiSuggestUi.error = "パントリーに食材が登録されていません。まずは在庫を登録してください。";
-    renderHome();
-    return;
-  }
-  aiSuggestUi.status = "loading"; aiSuggestUi.dishes = []; aiSuggestUi.error = ""; aiSuggestUi.pollinationsHealth = null; aiSuggestUi.imageGenBatchInProgress = false;
-  renderHome();
-  var pantrySorted = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
-  var pantryContext = pantrySorted.map(function(p){ return { id:p.id, name:p.name, qty:p.qty, unit:p.unit, daysUntilExpiry: daysUntil(p.expiry) }; });
-  var prompt = "あなたは家庭料理のアドバイザー兼栄養士です。ユーザーの現在の食材在庫（パントリー）は次の通りです（daysUntilExpiryが小さいほど賞味期限が近く、優先的に使うべき食材です）。\n"
-    + JSON.stringify(pantryContext) + "\n"
-    + "この在庫を使って作れる具体的な料理を最大4つ提案してください。特に賞味期限が近い食材を優先的に使う組み合わせを考えてください。\n"
-    + "各料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、実際にその料理を作るのに必要な主要な材料（調味料も含めてよい）を挙げ、それぞれが上記在庫の中にあるかどうか判定してください。\n"
-    + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
-    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}],"imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(画像生成AIへの指示文として使うため、料理名の日本語表記には頼らないこと)。最重要: 直前のingredientsで列挙した具体的な材料が画像にもそのまま写っていることが伝わるように、それぞれの色・形・切り方を明示して書くこと(一般的なその料理のイメージではなく、今回のingredientsの内容そのものを描写する)。例えば具材が鶏肉と大根なら、鶏肉や大根が実際に見えるように書き、無関係な具材を想像で足さないこと。例:\"a bowl of simmered chicken and daikon radish in soy sauce, tender chicken pieces, translucent white daikon chunks, glossy brown broth, dark ceramic bowl\")"}]\n'
-    + "数値はすべて概算で構いません。在庫だけで無理に完結させず、一般的なレシピとして自然な材料を挙げてください（在庫に無い調味料等が混ざるのは自然です）。ただし主役の食材はできるだけ在庫にあるものを使ってください。imagePromptEnは必ずingredientsに列挙した材料と一致させ、そこに無い食材を描写に含めないでください。";
-
+/* Shared by both suggestion modes (whole-pantry and single-ingredient, see
+   runAiSuggestions / runIngredientSuggestion below, added 2026-09-19) — everything after
+   the prompt itself is identical: call Gemini, parse into aiSuggestUi.dishes, kick off
+   auto image generation. Keeping this in one place means the two modes can't drift apart
+   on error handling or the image-gen kickoff. */
+async function runDishSuggestionQuery(prompt){
   var result = await callGeminiText(prompt, { maxOutputTokens: 1500 });
   if(!result.ok){
     aiSuggestUi.status = "error";
@@ -1391,6 +1371,70 @@ async function runAiSuggestions(){
     checkPollinationsHealth().then(function(h){ aiSuggestUi.pollinationsHealth = h; renderHome(); });
     startPollinationsHealthPolling();
   }
+}
+
+function resetAiSuggestUiForNewQuery(){
+  stopPollinationsHealthPolling();
+  aiSuggestUi.status = "loading"; aiSuggestUi.dishes = []; aiSuggestUi.error = ""; aiSuggestUi.pollinationsHealth = null; aiSuggestUi.imageGenBatchInProgress = false;
+  renderHome();
+}
+
+async function runAiSuggestions(){
+  if(!hasGeminiKey()){
+    aiSuggestUi.status = "error";
+    aiSuggestUi.error = "設定タブでGemini APIキーを登録してください。";
+    renderHome();
+    return;
+  }
+  if(!state.pantry.length){
+    aiSuggestUi.status = "error";
+    aiSuggestUi.error = "パントリーに食材が登録されていません。まずは在庫を登録してください。";
+    renderHome();
+    return;
+  }
+  resetAiSuggestUiForNewQuery();
+  var pantrySorted = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
+  var pantryContext = pantrySorted.map(function(p){ return { id:p.id, name:p.name, qty:p.qty, unit:p.unit, daysUntilExpiry: daysUntil(p.expiry) }; });
+  var prompt = "あなたは家庭料理のアドバイザー兼栄養士です。ユーザーの現在の食材在庫（パントリー）は次の通りです（daysUntilExpiryが小さいほど賞味期限が近く、優先的に使うべき食材です）。\n"
+    + JSON.stringify(pantryContext) + "\n"
+    + "この在庫を使って作れる具体的な料理を最大4つ提案してください。特に賞味期限が近い食材を優先的に使う組み合わせを考えてください。\n"
+    + "各料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、実際にその料理を作るのに必要な主要な材料（調味料も含めてよい）を挙げ、それぞれが上記在庫の中にあるかどうか判定してください。\n"
+    + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
+    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特にどの食材をなぜ使うか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}],"imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(画像生成AIへの指示文として使うため、料理名の日本語表記には頼らないこと)。最重要: 直前のingredientsで列挙した具体的な材料が画像にもそのまま写っていることが伝わるように、それぞれの色・形・切り方を明示して書くこと(一般的なその料理のイメージではなく、今回のingredientsの内容そのものを描写する)。例えば具材が鶏肉と大根なら、鶏肉や大根が実際に見えるように書き、無関係な具材を想像で足さないこと。例:\"a bowl of simmered chicken and daikon radish in soy sauce, tender chicken pieces, translucent white daikon chunks, glossy brown broth, dark ceramic bowl\")"}]\n'
+    + "数値はすべて概算で構いません。在庫だけで無理に完結させず、一般的なレシピとして自然な材料を挙げてください（在庫に無い調味料等が混ざるのは自然です）。ただし主役の食材はできるだけ在庫にあるものを使ってください。imagePromptEnは必ずingredientsに列挙した材料と一致させ、そこに無い食材を描写に含めないでください。";
+  await runDishSuggestionQuery(prompt);
+}
+
+/* Second suggestion mode (added 2026-09-19, user's idea): "この食材を使ったらどんな料理ができるか"
+   — instead of letting the AI pick from the whole pantry (expiry-priority), the user names
+   one specific pantry item they want to build a meal around. Shares aiSuggestUi, rendering,
+   image generation, recipe lookup and favorites entirely with the pantry-wide mode — only
+   the prompt differs, via the shared runDishSuggestionQuery above. */
+async function runIngredientSuggestion(){
+  if(!hasGeminiKey()){
+    aiSuggestUi.status = "error";
+    aiSuggestUi.error = "設定タブでGemini APIキーを登録してください。";
+    renderHome();
+    return;
+  }
+  var ingredient = state.pantry.find(function(p){ return p.id === aiSuggestUi.selectedIngredientId; });
+  if(!ingredient){
+    aiSuggestUi.status = "error";
+    aiSuggestUi.error = "食材を選択してください。";
+    renderHome();
+    return;
+  }
+  resetAiSuggestUiForNewQuery();
+  var pantrySorted = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
+  var pantryContext = pantrySorted.map(function(p){ return { id:p.id, name:p.name, qty:p.qty, unit:p.unit, daysUntilExpiry: daysUntil(p.expiry) }; });
+  var prompt = "あなたは家庭料理のアドバイザー兼栄養士です。ユーザーは「"+ingredient.name+"」を使った料理のアイデアを探しています。ユーザーの現在の食材在庫（パントリー）は次の通りです（daysUntilExpiryが小さいほど賞味期限が近い）。\n"
+    + JSON.stringify(pantryContext) + "\n"
+    + "「"+ingredient.name+"」を主役級の食材として必ず使う、具体的な料理を最大4つ提案してください。他の在庫食材（特に賞味期限が近いもの）を補助的に組み合わせるのは歓迎しますが、提案する料理は全て「"+ingredient.name+"」を実際に使う内容にしてください。\n"
+    + "各料理について、一般的な1人前の総量を推定して栄養価を概算するとともに、実際にその料理を作るのに必要な主要な材料（調味料も含めてよい）を挙げ、それぞれが上記在庫の中にあるかどうか判定してください。\n"
+    + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
+    + '[{"name":"料理名(日本語、具体的に)","reason":"この料理を勧める理由(短く。特に「'+ingredient.name+'」をどう活かすか)","estimatedGrams":料理全体の推定総重量(g),"kcal":その総量あたりのエネルギー(kcal),"protein":たんぱく質(g),"fat":脂質(g),"carb":炭水化物(g),"fiber":食物繊維(g),"salt":食塩相当量(g),"vegetableGrams":このうち野菜由来の重量(g。野菜でなければ0),"ingredients":[{"name":"材料名(日本語)","estimatedGrams":想定使用量(g),"matchedPantryId":上記在庫リストの中で対応するものがあればそのid(文字列)、無ければnull}],"imagePromptEn":"この料理の見た目を英語で具体的に説明する一文(画像生成AIへの指示文として使うため、料理名の日本語表記には頼らないこと)。最重要: 直前のingredientsで列挙した具体的な材料が画像にもそのまま写っていることが伝わるように、それぞれの色・形・切り方を明示して書くこと。例:\"a bowl of simmered chicken and daikon radish in soy sauce, tender chicken pieces, translucent white daikon chunks, glossy brown broth, dark ceramic bowl\")"}]\n'
+    + "数値はすべて概算で構いません。「"+ingredient.name+"」は必ず全ての提案で使ってください。それ以外は一般的なレシピとして自然な材料を挙げて構いません（在庫に無い調味料等が混ざるのは自然です）。imagePromptEnは必ずingredientsに列挙した材料と一致させ、そこに無い食材を描写に含めないでください。";
+  await runDishSuggestionQuery(prompt);
 }
 
 var RECEIPT_VALID_UNITS = ["g","ml","個","パック","本","枚","その他"];
@@ -1839,9 +1883,38 @@ function renderHome(){
           + '</div></div>';
       }).join("") + '</div>';
     } else {
-      aiBody = '<div class="hint" style="margin-top:10px">ボタンを押すと、在庫（特に賞味期限が近い食材）から作れる料理をAIが提案します。</div>';
+      aiBody = aiSuggestUi.mode==="pantry"
+        ? '<div class="hint" style="margin-top:10px">ボタンを押すと、在庫（特に賞味期限が近い食材）から作れる料理をAIが提案します。</div>'
+        : '<div class="hint" style="margin-top:10px">食材を選んでボタンを押すと、その食材を使った料理をAIが提案します。</div>';
     }
-    suggestCard = '<div class="card"><div class="card-head"><h2>今夜のおすすめ（AI）</h2><button type="button" id="aiSuggestBtn" class="btn secondary small">✨ AIに提案してもらう</button></div><div class="sub">料理名を押すと、必要な材料・在庫の過不足・レシピを確認できます</div>'+aiBody+'</div>';
+    /* Mode toggle (added 2026-09-19, user's idea): "在庫から提案" keeps the original
+       whole-pantry/expiry-priority behavior; "食材を指定" lets the user name one pantry
+       item and get dishes built around it (see runIngredientSuggestion). Both modes share
+       aiSuggestUi/aiBody/image generation/recipe lookup — only the trigger control differs. */
+    var modeToggleHtml = '<div class="pill-tabs" id="aiSuggestModeTabs" style="margin-bottom:0">'
+      + '<button type="button" data-mode="pantry" class="'+(aiSuggestUi.mode==="pantry"?"active":"")+'">在庫から提案</button>'
+      + '<button type="button" data-mode="ingredient" class="'+(aiSuggestUi.mode==="ingredient"?"active":"")+'">食材を指定</button>'
+      + '</div>';
+    var actionHtml;
+    if(aiSuggestUi.mode==="pantry"){
+      actionHtml = '<button type="button" id="aiSuggestBtn" class="btn secondary small">✨ AIに提案してもらう</button>';
+    } else {
+      var ingredientOptions = state.pantry.length
+        ? '<option value="">選択してください</option>' + state.pantry.map(function(p){ return '<option value="'+p.id+'"'+(aiSuggestUi.selectedIngredientId===p.id?" selected":"")+'>'+escapeAttr(p.name)+'</option>'; }).join("")
+        : '<option value="">在庫がありません</option>';
+      actionHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+        + '<select id="aiIngredientSelect" style="flex:1;min-width:160px;padding:8px 10px;border-radius:9px;border:1px solid var(--border);background:var(--surface);font-size:13.5px" '+(!state.pantry.length?"disabled":"")+'>'+ingredientOptions+'</select>'
+        + '<button type="button" id="aiIngredientSuggestBtn" class="btn secondary small"'+(!state.pantry.length?" disabled":"")+'>✨ この食材で提案してもらう</button>'
+        + '</div>';
+    }
+    var suggestSub = aiSuggestUi.mode==="pantry"
+      ? "料理名を押すと、必要な材料・在庫の過不足・レシピを確認できます"
+      : "使いたい食材を選んで提案してもらいましょう";
+    suggestCard = '<div class="card"><div class="card-head"><h2>今夜のおすすめ（AI）</h2></div>'
+      + modeToggleHtml
+      + '<div class="sub" style="margin-top:8px">'+suggestSub+'</div>'
+      + actionHtml
+      + aiBody + '</div>';
   } else {
     suggestCard = '<div class="card"><div class="card-head"><h2>今夜のおすすめ</h2></div><div class="sub">期限が近い食材 × 不足栄養素から提案（設定タブでGemini APIキーを登録すると、AIによる具体的な料理提案に切り替わります）</div>'+suggestHtml+'</div>';
   }
@@ -1916,6 +1989,23 @@ function renderHome(){
 
   var aiSuggestBtn = document.getElementById("aiSuggestBtn");
   if(aiSuggestBtn) aiSuggestBtn.addEventListener("click", runAiSuggestions);
+
+  var aiSuggestModeTabs = document.getElementById("aiSuggestModeTabs");
+  if(aiSuggestModeTabs) aiSuggestModeTabs.addEventListener("click", function(e){
+    var b = e.target.closest("button[data-mode]"); if(!b) return;
+    if(aiSuggestUi.mode === b.dataset.mode) return;
+    aiSuggestUi.mode = b.dataset.mode;
+    renderHome();
+  });
+  var aiIngredientSelect = document.getElementById("aiIngredientSelect");
+  if(aiIngredientSelect) aiIngredientSelect.addEventListener("change", function(){
+    aiSuggestUi.selectedIngredientId = aiIngredientSelect.value || null;
+  });
+  var aiIngredientSuggestBtn = document.getElementById("aiIngredientSuggestBtn");
+  if(aiIngredientSuggestBtn) aiIngredientSuggestBtn.addEventListener("click", function(){
+    if(aiIngredientSelect) aiSuggestUi.selectedIngredientId = aiIngredientSelect.value || null;
+    runIngredientSuggestion();
+  });
 
   el.querySelectorAll(".ai-suggest-log-btn").forEach(function(btn){
     btn.addEventListener("click", function(){
