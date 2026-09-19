@@ -1214,10 +1214,6 @@ async function runAiSuggestions(){
     aiSuggestUi.dishes = geminiPhotoItemsFromResponseText(result.text, validPantryIds);
     aiSuggestUi.status = aiSuggestUi.dishes.length ? "done" : "error";
     if(!aiSuggestUi.dishes.length) aiSuggestUi.error = "提案を作成できませんでした。もう一度お試しください。";
-    /* mark loading immediately (before the first render below) so every card shows a
-       "生成中" placeholder from the first frame instead of a blank flash before the
-       image loop actually starts fetching */
-    if(imageGenEnabled) aiSuggestUi.dishes.forEach(function(d){ d.imageLoading = true; });
   }catch(e){
     aiSuggestUi.status = "error";
     aiSuggestUi.error = PHOTO_ERROR_MESSAGES.invalid_json;
