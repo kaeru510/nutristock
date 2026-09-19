@@ -1043,7 +1043,7 @@ function toggleFavoriteDish(dish){
     state.favoriteDishes.splice(idx,1);
   } else {
     var saved = Object.assign({}, dish);
-    delete saved.imageDataUrl; delete saved.imageLoading;
+    delete saved.imageDataUrl; delete saved.imageLoading; delete saved.imageAttempted; delete saved.detailOpen;
     if(saved.recipe && saved.recipe.status==="loading") delete saved.recipe; /* mid-fetch when favorited — nothing left to resolve it, so drop rather than persist a stuck spinner */
     saved.savedAt = Date.now();
     state.favoriteDishes.unshift(saved);
@@ -1066,8 +1066,11 @@ function logDishAsMeal(d){
   renderAll();
 }
 
-/* per-dish, button-triggered only (see imageGenEnabled) — never generated automatically
-   for every suggestion, to keep this opt-in feature's cost predictable */
+/* Runs automatically for every dish right after a suggestion batch loads (when
+   imageGenEnabled), via generateAllSuggestedDishImages() below — also reused for the
+   manual "🔄 別の画像に" / "🎨 再試行" button on a single dish. Pollinations.ai is free and
+   doesn't touch the Gemini quota, so auto-generating one image per suggested dish costs
+   nothing in tokens even though it's no longer opt-in per dish. */
 async function generateImageForSuggestedDish(idx){
   var d = aiSuggestUi.dishes[idx];
   if(!d || d.imageLoading) return;
@@ -1086,8 +1089,20 @@ async function generateImageForSuggestedDish(idx){
   var url = await generateDishImageDataUrl(prompt);
   d.imageLoading = false;
   d.imageDataUrl = url;
-  if(!url) showToast("画像を生成できませんでした");
+  d.imageAttempted = true;
   renderHome();
+}
+
+/* Fires once per suggestion batch (see runAiSuggestions), one dish at a time — sequential
+   rather than parallel to stay under Pollinations' shared community rate limit (see
+   NOTES.md, the 429s seen under load with the default "sana" model). Bails out if the
+   dish list has since been replaced (user hit "AIに提案してもらう" again mid-loop). */
+async function generateAllSuggestedDishImages(){
+  var dishes = aiSuggestUi.dishes;
+  for(var i=0;i<dishes.length;i++){
+    if(aiSuggestUi.dishes !== dishes) return;
+    await generateImageForSuggestedDish(i);
+  }
 }
 
 function recipeButtonHtml(d, idx, source){
@@ -1193,11 +1208,16 @@ async function runAiSuggestions(){
     aiSuggestUi.dishes = geminiPhotoItemsFromResponseText(result.text, validPantryIds);
     aiSuggestUi.status = aiSuggestUi.dishes.length ? "done" : "error";
     if(!aiSuggestUi.dishes.length) aiSuggestUi.error = "提案を作成できませんでした。もう一度お試しください。";
+    /* mark loading immediately (before the first render below) so every card shows a
+       "生成中" placeholder from the first frame instead of a blank flash before the
+       image loop actually starts fetching */
+    if(imageGenEnabled) aiSuggestUi.dishes.forEach(function(d){ d.imageLoading = true; });
   }catch(e){
     aiSuggestUi.status = "error";
     aiSuggestUi.error = PHOTO_ERROR_MESSAGES.invalid_json;
   }
   renderHome();
+  if(imageGenEnabled && aiSuggestUi.dishes.length) generateAllSuggestedDishImages();
 }
 
 var RECEIPT_VALID_UNITS = ["g","ml","個","パック","本","枚","その他"];
@@ -1598,25 +1618,31 @@ function renderHome(){
             + statusHtml
             + '</div>';
         }).join("");
+        var imageBlock = d.imageDataUrl
+          ? '<img src="'+d.imageDataUrl+'" style="width:100%;border-radius:10px;margin-bottom:8px;display:block">'
+          : (d.imageLoading ? '<div class="hint" style="margin-bottom:6px">🎨 画像を生成中…</div>'
+            : (d.imageAttempted ? '<div class="hint" style="margin-bottom:6px;color:var(--crit)">画像を生成できませんでした</div>' : ''));
+        var imageBtn = (imageGenEnabled && !d.imageLoading)
+          ? '<button type="button" class="btn ghost small ai-suggest-img-btn" data-idx="'+idx+'">'+(d.imageDataUrl?"🔄 別の画像に":(d.imageAttempted?"🎨 再試行":"🎨 画像を生成"))+'</button>'
+          : '';
         return '<div class="suggest-card"><div class="ic">🍳</div><div style="flex:1;min-width:0">'
-          + '<details class="meal-detail"><summary class="t">'+escapeAttr(d.name)+'</summary>'
+          + imageBlock
+          + '<details class="meal-detail ai-suggest-detail" data-idx="'+idx+'"'+(d.detailOpen?" open":"")+'><summary class="t">'+escapeAttr(d.name)+'</summary>'
           +   '<div class="ingredient-detail-list" style="margin-top:6px">'+ingredientsHtml+'</div>'
+          +   (d.recipe && d.recipe.status==="loading" ? '<div class="hint" style="margin-top:8px">📖 レシピを検索中…</div>' : recipeDisplayHtml(d))
           + '</details>'
           + '<div class="d">'+escapeAttr(d.reason)+'</div>'
-          + (d.imageDataUrl ? '<img src="'+d.imageDataUrl+'" style="width:100%;border-radius:10px;margin-top:8px;display:block">' : '')
-          + recipeDisplayHtml(d)
           + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;flex-wrap:wrap">'
           +   '<button type="button" class="btn small ai-suggest-log-btn" data-idx="'+idx+'">これを記録する</button>'
           +   '<button type="button" class="btn ghost small ai-suggest-fav-btn" data-idx="'+idx+'">'+(isFavoriteDish(d.name)?"⭐ 保存済み":"☆ お気に入り")+'</button>'
-          +   recipeButtonHtml(d, idx, "ai")
-          +   (imageGenEnabled ? '<button type="button" class="btn ghost small ai-suggest-img-btn" data-idx="'+idx+'"'+(d.imageLoading?" disabled":"")+'>'+(d.imageLoading?"🎨 生成中…":(d.imageDataUrl?"🎨 再生成":"🎨 画像を生成"))+'</button>' : '')
+          +   imageBtn
           + '</div>'
           + '</div></div>';
       }).join("") + '</div>';
     } else {
       aiBody = '<div class="hint" style="margin-top:10px">ボタンを押すと、在庫（特に賞味期限が近い食材）から作れる料理をAIが提案します。</div>';
     }
-    suggestCard = '<div class="card"><div class="card-head"><h2>今夜のおすすめ（AI）</h2><button type="button" id="aiSuggestBtn" class="btn secondary small">✨ AIに提案してもらう</button></div><div class="sub">料理名を押すと、必要な材料と在庫の過不足を確認できます</div>'+aiBody+'</div>';
+    suggestCard = '<div class="card"><div class="card-head"><h2>今夜のおすすめ（AI）</h2><button type="button" id="aiSuggestBtn" class="btn secondary small">✨ AIに提案してもらう</button></div><div class="sub">料理名を押すと、必要な材料・在庫の過不足・レシピを確認できます</div>'+aiBody+'</div>';
   } else {
     suggestCard = '<div class="card"><div class="card-head"><h2>今夜のおすすめ</h2></div><div class="sub">期限が近い食材 × 不足栄養素から提案（設定タブでGemini APIキーを登録すると、AIによる具体的な料理提案に切り替わります）</div>'+suggestHtml+'</div>';
   }
@@ -1709,6 +1735,17 @@ function renderHome(){
   el.querySelectorAll(".ai-suggest-img-btn").forEach(function(btn){
     btn.addEventListener("click", function(){
       generateImageForSuggestedDish(parseInt(btn.dataset.idx, 10));
+    });
+  });
+  el.querySelectorAll(".ai-suggest-detail").forEach(function(det){
+    det.addEventListener("toggle", function(){
+      var idx = parseInt(det.dataset.idx, 10);
+      var d = aiSuggestUi.dishes[idx];
+      if(!d) return;
+      d.detailOpen = det.open;
+      /* fetch on first open, and retry on reopen after a failed attempt — but never on
+         an already-successful fetch, so idle open/close toggling can't burn extra quota */
+      if(det.open && (!d.recipe || d.recipe.status==="error")) fetchRecipeForDish("ai", idx);
     });
   });
   el.querySelectorAll(".fav-log-btn").forEach(function(btn){
@@ -2518,7 +2555,7 @@ function renderSettings(){
     +   '<div class="field"><label>使用モデル</label><select id="ak_model">'
     +     GEMINI_MODEL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(geminiModel===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
     +   '</select><div class="hint">503エラーが頻発する場合は、別のモデルに切り替えると改善することがあります（無料枠のレート制限がモデルごとに別枠のため）</div></div>'
-    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめに画像生成ボタンを表示する（Pollinations.aiの無料サービスを利用・APIキー不要。生成画像には小さな透かしが入ります）</label>'
+    +   '<label class="checkline"><input type="checkbox" id="ak_imagegen"'+(imageGenEnabled?" checked":"")+'> 🎨 今夜のおすすめが出たとき、各料理の画像を自動生成する（Pollinations.aiの無料サービスを利用・APIキー不要・Gemini利用枠は消費しません。生成画像には小さな透かしが入ります）</label>'
     +   '<div class="hint">共有・他人と使う端末では開発者ツール等から読み取れてしまう点にご注意ください。</div>'
     +   '<div class="form-actions"><button type="button" id="ak_clear" class="btn ghost small">削除</button><button type="submit" class="btn small">保存</button></div>'
     + '</form>'
