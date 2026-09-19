@@ -1254,7 +1254,13 @@ async function generateAllSuggestedDishImages(){
   var dishes = aiSuggestUi.dishes;
   for(var i=0;i<dishes.length;i++){
     if(aiSuggestUi.dishes !== dishes) return;
-    if(i>0) await new Promise(function(r){ setTimeout(r, POLLINATIONS_RETRY_DELAY_SEC*1000); });
+    /* Only pause before the next dish if the previous one never actually succeeded
+       (2026-09-19, user's observation — confirmed by real logs showing the wait didn't
+       prevent anything). A clean 200 OK means Pollinations already fully finished and
+       released whatever it was holding; the "give the slot time to clear" reasoning only
+       applies to a request WE gave up on (timeout/abort) while the server may still have
+       been working on it. There's no equivalent zombie-slot risk after a real success. */
+    if(i>0 && !dishes[i-1].imageDataUrl) await new Promise(function(r){ setTimeout(r, POLLINATIONS_RETRY_DELAY_SEC*1000); });
     if(aiSuggestUi.dishes !== dishes) return;
     await generateImageForSuggestedDish(i);
   }
