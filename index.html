@@ -1896,17 +1896,18 @@ function renderHome(){
            the app rather than a one-off. */
         var sectionLabel = function(text){ return '<div style="font-size:11.5px;color:var(--ink-3);font-weight:700;letter-spacing:.02em;margin-top:10px">'+text+'</div>'; };
         return '<div class="suggest-card"><div class="ic">🍳</div><div style="flex:1;min-width:0">'
-          /* Order (2026-09-19, user's request): 説明→材料→レシピ→画像, each section labeled.
-             Dish name stays as the <summary> — tapping it still lazily fetches the recipe
-             (see the toggle listener) — everything else moved inside so it only renders once
-             expanded, matching how 材料/レシピ already worked. */
-          + '<details class="meal-detail ai-suggest-detail" data-idx="'+idx+'"'+(d.detailOpen?" open":"")+'><summary class="t">'+escapeAttr(d.name)+'</summary>'
-          +   sectionLabel('料理の説明') + '<div class="d" style="margin-top:2px">'+escapeAttr(d.reason)+'</div>'
+          /* At-a-glance content — name, description, image — stays outside any <details>
+             (2026-09-19, user's request: these three should be visible before tapping into
+             anything). Only 材料/レシピ stay behind a tap, now via their own dedicated
+             summary instead of piggybacking on the dish name — the name is no longer the
+             expand trigger, just a heading. */
+          + '<div class="t" style="font-weight:700">'+escapeAttr(d.name)+'</div>'
+          + sectionLabel('料理の説明') + '<div class="d" style="margin-top:2px">'+escapeAttr(d.reason)+'</div>'
+          + (imageBlock ? sectionLabel('画像') : '') + '<div style="margin-top:4px">'+imageBlock+'</div>'
+          + '<details class="meal-detail ai-suggest-detail" data-idx="'+idx+'"'+(d.detailOpen?" open":"")+' style="margin-top:10px"><summary>材料・レシピを見る</summary>'
           +   sectionLabel('材料') + '<div class="ingredient-detail-list" style="margin-top:6px">'+ingredientsHtml+'</div>'
           +   sectionLabel('レシピ') + (d.recipe && d.recipe.status==="loading" ? '<div class="hint" style="margin-top:6px">📖 レシピを検索中…</div>' : recipeDisplayHtml(d))
           + '</details>'
-          + (imageBlock ? sectionLabel('画像') : '')
-          + '<div style="margin-top:4px">'+imageBlock+'</div>'
           + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;flex-wrap:wrap">'
           +   '<button type="button" class="btn small ai-suggest-log-btn" data-idx="'+idx+'">これを記録する</button>'
           +   '<button type="button" class="btn ghost small ai-suggest-fav-btn" data-idx="'+idx+'">'+(isFavoriteDish(d.name)?"⭐ 保存済み":"☆ お気に入り")+'</button>'
