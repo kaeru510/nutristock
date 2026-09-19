@@ -884,7 +884,13 @@ async function generateDishImageDataUrl(promptText){
   for(var attempt=0; attempt<2; attempt++){
     try{
       var controller = new AbortController();
-      var timeoutId = setTimeout(function(){ controller.abort(); }, 30000);
+      /* 20s, not 30s: with the per-IP "max 1 in-flight request" limit (see NOTES.md),
+         dishes are generated strictly one at a time, so every second spent waiting on a
+         stuck request here is a second every later dish just sits idle. A request that's
+         going to hang usually never responds at all rather than responding slowly, so
+         cutting the timeout mostly just fails faster without giving up on requests that
+         were actually about to succeed. */
+      var timeoutId = setTimeout(function(){ controller.abort(); }, 20000);
       var res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
       if(res.ok){
@@ -1628,12 +1634,12 @@ function renderHome(){
           ? '<button type="button" class="btn ghost small ai-suggest-img-btn" data-idx="'+idx+'">'+(d.imageDataUrl?"🔄 別の画像に":(d.imageAttempted?"🎨 再試行":"🎨 画像を生成"))+'</button>'
           : '';
         return '<div class="suggest-card"><div class="ic">🍳</div><div style="flex:1;min-width:0">'
-          + imageBlock
           + '<details class="meal-detail ai-suggest-detail" data-idx="'+idx+'"'+(d.detailOpen?" open":"")+'><summary class="t">'+escapeAttr(d.name)+'</summary>'
           +   '<div class="ingredient-detail-list" style="margin-top:6px">'+ingredientsHtml+'</div>'
           +   (d.recipe && d.recipe.status==="loading" ? '<div class="hint" style="margin-top:8px">📖 レシピを検索中…</div>' : recipeDisplayHtml(d))
           + '</details>'
           + '<div class="d">'+escapeAttr(d.reason)+'</div>'
+          + '<div style="margin-top:8px">'+imageBlock+'</div>'
           + '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;flex-wrap:wrap">'
           +   '<button type="button" class="btn small ai-suggest-log-btn" data-idx="'+idx+'">これを記録する</button>'
           +   '<button type="button" class="btn ghost small ai-suggest-fav-btn" data-idx="'+idx+'">'+(isFavoriteDish(d.name)?"⭐ 保存済み":"☆ お気に入り")+'</button>'
