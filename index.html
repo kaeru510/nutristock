@@ -309,6 +309,53 @@ var FOOD_BY_KEY = {};
 FOOD_DB.forEach(function(f){ FOOD_BY_KEY[f.key] = f; });
 var CAT_LABEL = {meat:"肉",fish:"魚介",egg_dairy:"卵・乳製品",soy:"大豆製品",veg:"野菜・きのこ",grain:"穀物",fruit:"果物",season:"調味料・油",other:"その他"};
 var CAT_ICON = {meat:"🍗",fish:"🐟",egg_dairy:"🥛",soy:"🫘",veg:"🥬",grain:"🍚",fruit:"🍎",season:"🧂",other:"🍽️"};
+/* "other" stays defined above only as an internal last-resort fallback (used when nothing
+   else applies, e.g. a blank custom-category entry) — never offered as a pickable option
+   after 2026-09-19 (user's request: a mismatched item should become its own new category
+   instead of being dumped into a generic "other" bucket). CATEGORY_PRESET_KEYS is what every
+   category <select> actually lists. */
+var CATEGORY_PRESET_KEYS = Object.keys(CAT_LABEL).filter(function(k){ return k!=="other"; });
+/* A pantry/receipt item's category is either one of CATEGORY_PRESET_KEYS or an arbitrary
+   user/AI-typed string (added 2026-09-19) — this is the one place that knows how to turn
+   either into display text. */
+function catDisplayLabel(cat){ return cat ? (CAT_LABEL[cat] || cat) : "未設定"; }
+/* Shared by every category <select> (pantryForm/receipt rows/barcode history): the preset
+   options, plus (if the current value is a custom string not in CAT_LABEL) that value
+   injected as its own selected option so the select actually shows it, plus a trailing
+   "カスタム入力…" option that reveals a free-text field for typing a new one. */
+function categoryOptionsHtml(currentCat){
+  var isCustomValue = !!currentCat && !CAT_LABEL[currentCat];
+  var html = CATEGORY_PRESET_KEYS.map(function(k){ return '<option value="'+k+'"'+(currentCat===k?" selected":"")+'>'+CAT_LABEL[k]+'</option>'; }).join("");
+  if(isCustomValue) html += '<option value="'+escapeAttr(currentCat)+'" selected>'+escapeAttr(currentCat)+'（カスタム）</option>';
+  html += '<option value="__custom_cat">カスタム入力…</option>';
+  return html;
+}
+/* Resolves a category <select> + its paired free-text input back into a stored category
+   value at submit time. Falls back to the internal "other" bucket only if the user picked
+   "カスタム入力…" but left the text field blank — never exposed as a choice, just a safety
+   net so an item can't end up with an empty category. */
+function resolveCategoryFromInputs(selectEl, customInputEl){
+  if(selectEl.value === "__custom_cat"){
+    var typed = (customInputEl && customInputEl.value || "").trim().slice(0,20);
+    return typed || "other";
+  }
+  return selectEl.value;
+}
+/* Programmatically applies a category value (e.g. from an AI guess) to a select built by
+   categoryOptionsHtml — a plain `selectEl.value = category` silently no-ops when category
+   is a custom string with no matching <option>, so this routes through the "カスタム入力…"
+   placeholder + reveals the paired text field instead. */
+function applyCategoryToSelect(selectEl, customWrapEl, customInputEl, category){
+  if(!selectEl || !category) return;
+  if(CAT_LABEL[category]){
+    selectEl.value = category;
+    if(customWrapEl) customWrapEl.style.display = "none";
+  } else {
+    selectEl.value = "__custom_cat";
+    if(customInputEl) customInputEl.value = category;
+    if(customWrapEl) customWrapEl.style.display = "";
+  }
+}
 var MEAL_LABEL = {breakfast:"朝食",lunch:"昼食",dinner:"夕食",snack:"間食"};
 var NUTRIENT_LABEL = {kcal:"エネルギー",protein:"たんぱく質",fat:"脂質",carb:"炭水化物",fiber:"食物繊維",salt:"食塩相当量",veg:"野菜摂取量"};
 var NUTRIENT_UNIT = {kcal:"kcal",protein:"g",fat:"g",carb:"g",fiber:"g",salt:"g",veg:"g"};
@@ -1136,18 +1183,22 @@ var PANTRY_VALID_UNITS = ["g","ml","個","パック","本","枚","その他"];
    prompt) rather than merged into one bigger call. */
 async function guessFoodCategoryAndUnit(name){
   if(!hasGeminiKey() || !name) return null;
-  var catKeys = Object.keys(CAT_LABEL);
   var prompt = "次の食品に最も適切なカテゴリと、数える単位を1つずつ推測してください。食品名: " + name + "\n"
-    + "カテゴリは次のいずれか1つだけ: " + catKeys.join(", ") + "\n"
+    + "カテゴリは次のいずれかが当てはまればそれを使ってください: " + CATEGORY_PRESET_KEYS.join(", ") + "\n"
+    + "どれにも当てはまらない場合は、日本語の短いカテゴリ名（例:飲料、菓子）を自分で考えて構いません。\n"
     + "単位は次のいずれか1つだけ: " + PANTRY_VALID_UNITS.join(", ") + "\n"
     + "次のJSON形式のみで回答してください。前後の説明文は一切書かないでください。\n"
-    + '{"category":"カテゴリのキー","unit":"単位"}';
+    + '{"category":"カテゴリのキーまたは考えたカテゴリ名","unit":"単位"}';
   var result = await callGeminiText(prompt, { maxOutputTokens: 60, noRetry: true });
   if(!result.ok) return null;
   try{
     var cleaned = result.text.trim().replace(/^```[a-zA-Z]*\n?/,"").replace(/```\s*$/,"").trim();
     var parsed = JSON.parse(cleaned);
-    var category = catKeys.indexOf(parsed.category)!==-1 ? parsed.category : null;
+    /* Accept a known preset key as-is, or the model's own proposed category name verbatim
+       (2026-09-19, user's request — a mismatch should become a new category instead of
+       being coerced into "other"). Only reject empty/oversized/garbled text. */
+    var rawCategory = String(parsed.category||"").trim().slice(0,20);
+    var category = rawCategory && !/[{}[\]"]/.test(rawCategory) ? rawCategory : null;
     var unit = PANTRY_VALID_UNITS.indexOf(parsed.unit)!==-1 ? parsed.unit : null;
     return (category || unit) ? { category: category, unit: unit } : null;
   }catch(e){
@@ -1494,7 +1545,7 @@ async function runIngredientSuggestion(){
 
 var RECEIPT_VALID_UNITS = ["g","ml","個","パック","本","枚","その他"];
 function receiptRowHtml(it, idx){
-  var catOptions = Object.keys(CAT_LABEL).map(function(k){ return '<option value="'+k+'"'+(it.category===k?" selected":"")+'>'+CAT_LABEL[k]+'</option>'; }).join("");
+  var catOptions = categoryOptionsHtml(it.category);
   var unitOptions = RECEIPT_VALID_UNITS.map(function(u){ return '<option value="'+u+'"'+(it.unit===u?" selected":"")+'>'+u+'</option>'; }).join("");
   return '<div class="receipt-row" data-idx="'+idx+'">'
     + '<div class="receipt-row-top">'
@@ -1507,6 +1558,7 @@ function receiptRowHtml(it, idx){
     +   '<select class="ri-unit">'+unitOptions+'</select>'
     +   '<input type="date" class="ri-expiry" value="'+it.expiry+'">'
     + '</div>'
+    + '<div class="field ri-customCatWrap" style="display:none;margin-top:6px;padding-left:26px"><label>新しいカテゴリ名</label><input type="text" class="ri-customCat" placeholder="例：飲料" maxlength="20"></div>'
     + '</div>';
 }
 
@@ -1524,7 +1576,7 @@ async function runReceiptAnalysis(file){
   renderPantry();
   var prompt = "あなたはスーパーのレシートを読み取るアシスタントです。添付したレシート画像から、購入した食品だけを最大20件までリストアップしてください。税金・割引・ポイント・レジ袋・非食品などの行は無視してください。\n"
     + "次のJSON配列の形式だけで回答してください。前後の説明文やマークダウンのコードブロックは一切書かないでください。\n"
-    + '[{"name":"商品名(日本語。レシートの表記を分かりやすく整えてよい)","category":"次のいずれか: meat,fish,egg_dairy,soy,veg,grain,fruit,season,other","estimatedQty":一般的な家庭用の数量(数値),"unit":"g,ml,個,パック,本,枚のいずれか","expiryDays":この食品の一般的な賞味/消費期限までの目安日数(整数)}]\n'
+    + '[{"name":"商品名(日本語。レシートの表記を分かりやすく整えてよい)","category":"次のいずれかが当てはまればそれを使う: '+CATEGORY_PRESET_KEYS.join(",")+'。どれも当てはまらなければ日本語の短いカテゴリ名を自分で考える(例:飲料、菓子)","estimatedQty":一般的な家庭用の数量(数値),"unit":"g,ml,個,パック,本,枚のいずれか","expiryDays":この食品の一般的な賞味/消費期限までの目安日数(整数)}]\n'
     + "数量・単位は実用的な形にしてください（例：卵はパック単位で1、鶏肉は推定グラム数など）。";
 
   fileToInlineImage(file, async function(imgSource){
@@ -1538,7 +1590,11 @@ async function runReceiptAnalysis(file){
     try{
       var arr = parseGeminiJsonArray(result.text);
       receiptUi.items = arr.slice(0,20).map(function(it){
-        var cat = CAT_LABEL[it.category] ? it.category : "other";
+        /* Accept a known preset key as-is, or the model's own proposed category name
+           verbatim (2026-09-19, user's request — a mismatch becomes a new category rather
+           than being coerced into "other"). Only reject empty/oversized/garbled text. */
+        var rawCat = String(it.category||"").trim().slice(0,20);
+        var cat = rawCat && !/[{}[\]"]/.test(rawCat) ? rawCat : "other";
         var unit = RECEIPT_VALID_UNITS.indexOf(it.unit)>=0 ? it.unit : "個";
         var expiryDays = Number(it.expiryDays);
         if(!isFinite(expiryDays) || expiryDays<0) expiryDays = 4;
@@ -2179,7 +2235,7 @@ function rowItemHtml(p, showActions){
     : "";
   return '<div class="row-item" data-id="'+p.id+'">'
     + '<div class="dot" style="background:'+b.color+'"></div>'
-    + '<div class="main"><div class="name">'+icon+' '+p.name+'</div><div class="meta">'+p.qty+p.unit+' ・ '+CAT_LABEL[p.category]+'</div></div>'
+    + '<div class="main"><div class="name">'+icon+' '+p.name+'</div><div class="meta">'+p.qty+p.unit+' ・ '+catDisplayLabel(p.category)+'</div></div>'
     + '<span class="days" style="color:'+b.color+'">'+b.text+'</span>'
     + '<span class="tag">'+p.expiry+'</span>'
     + actions
@@ -2276,7 +2332,18 @@ function renderPantry(){
 
   var presentCats = {};
   state.pantry.forEach(function(p){ presentCats[p.category] = true; });
-  var catKeys = Object.keys(CAT_LABEL).filter(function(k){ return presentCats[k]; });
+  /* Was Object.keys(CAT_LABEL).filter(...) — only ever showed a pill for the 9 built-in
+     categories. Custom categories (2026-09-19) need a pill too, so this now starts from
+     whatever category values are actually present in the pantry, sorted with the known
+     presets first (in their usual order) and anything else — including custom strings and
+     the internal "other" fallback — alphabetically after. */
+  var catKeys = Object.keys(presentCats).sort(function(a,b){
+    var ai = CATEGORY_PRESET_KEYS.indexOf(a), bi = CATEGORY_PRESET_KEYS.indexOf(b);
+    if(ai===-1 && bi===-1) return a.localeCompare(b, "ja");
+    if(ai===-1) return 1;
+    if(bi===-1) return -1;
+    return ai-bi;
+  });
 
   var filtered = state.pantry.filter(function(p){
     var matchCat = pantryUi.category==="all" || p.category===pantryUi.category;
@@ -2299,7 +2366,7 @@ function renderPantry(){
   var filterHtml = state.pantry.length ? (
     '<div class="pill-tabs" id="pantryCatFilter">'
     + '<button data-cat="all" class="'+(pantryUi.category==="all"?"active":"")+'">すべて</button>'
-    + catKeys.map(function(k){ return '<button data-cat="'+k+'" class="'+(pantryUi.category===k?"active":"")+'">'+CAT_LABEL[k]+'</button>'; }).join("")
+    + catKeys.map(function(k){ return '<button data-cat="'+k+'" class="'+(pantryUi.category===k?"active":"")+'">'+catDisplayLabel(k)+'</button>'; }).join("")
     + '</div>'
     + '<div class="pill-tabs" id="pantryExpiryFilter">'
     + EXPIRY_FILTER_OPTIONS.map(function(o){ return '<button data-days="'+o.v+'" class="'+((pantryUi.expiryDays===null?"":String(pantryUi.expiryDays))===o.v?"active":"")+'">'+o.label+'</button>'; }).join("")
@@ -2366,8 +2433,9 @@ function renderPantry(){
     +   '</div>'
     +   '<div class="field-row" id="pf_customWrap" style="display:none">'
     +     '<div class="field"><label>食材名（自由入力）</label><input id="pf_custom" type="text" placeholder="例：ちくわ"></div>'
-    +     '<div class="field"><label>カテゴリ</label><select id="pf_customCat">'+ Object.keys(CAT_LABEL).map(function(k){ return '<option value="'+k+'">'+CAT_LABEL[k]+'</option>'; }).join("") +'</select></div>'
+    +     '<div class="field"><label>カテゴリ</label><select id="pf_customCat">'+ categoryOptionsHtml(null) +'</select></div>'
     +   '</div>'
+    +   '<div class="field" id="pf_customCatWrap" style="display:none"><label>新しいカテゴリ名</label><input id="pf_customCatInput" type="text" placeholder="例：飲料" maxlength="20"></div>'
     +   '<div id="pf_barcodeNote"></div>'
     +   '<div class="field-row">'
     +     '<div class="field"><label>数量</label><input id="pf_qty" type="number" min="0" step="0.1" placeholder="1" value="1"></div>'
@@ -2392,6 +2460,10 @@ function renderPantry(){
     } else {
       checkExistingStock([]);
     }
+  });
+
+  document.getElementById("pf_customCat").addEventListener("change", function(){
+    document.getElementById("pf_customCatWrap").style.display = this.value==="__custom_cat" ? "" : "none";
   });
 
   if(state.pantry.length){
@@ -2423,7 +2495,7 @@ function renderPantry(){
         document.getElementById("pf_food").value = "__custom";
         document.getElementById("pf_customWrap").style.display = "";
         document.getElementById("pf_custom").value = r.name;
-        document.getElementById("pf_customCat").value = r.category || "other";
+        applyCategoryToSelect(document.getElementById("pf_customCat"), document.getElementById("pf_customCatWrap"), document.getElementById("pf_customCatInput"), r.category || "other");
         checkExistingStock(state.pantry.filter(function(p){ return !p.foodKey && p.name===r.name; }));
       }
       document.getElementById("pf_unit").value = r.unit;
@@ -2472,7 +2544,7 @@ function renderPantry(){
       document.getElementById("pf_customWrap").style.display = "";
       document.getElementById("pf_custom").value = prefillName;
       if(prefillUnit) document.getElementById("pf_unit").value = prefillUnit;
-      if(prefillCat) document.getElementById("pf_customCat").value = prefillCat;
+      if(prefillCat) applyCategoryToSelect(document.getElementById("pf_customCat"), document.getElementById("pf_customCatWrap"), document.getElementById("pf_customCatInput"), prefillCat);
       pendingBarcode = code;
       pendingBarcodeNutrition = known ? (known.nutrition100 || null) : null;
 
@@ -2499,7 +2571,7 @@ function renderPantry(){
           if(!guess) return;
           var catEl = document.getElementById("pf_customCat");
           var unitEl = document.getElementById("pf_unit");
-          if(guess.category && catEl) catEl.value = guess.category;
+          if(guess.category) applyCategoryToSelect(catEl, document.getElementById("pf_customCatWrap"), document.getElementById("pf_customCatInput"), guess.category);
           if(guess.unit && unitEl) unitEl.value = guess.unit;
         });
       }
@@ -2534,7 +2606,7 @@ function renderPantry(){
     var unit = document.getElementById("pf_unit").value;
     var expiry = document.getElementById("pf_expiry").value;
     if(!expiry) return;
-    var cat = custom ? document.getElementById("pf_customCat").value : FOOD_BY_KEY[foodKey].cat;
+    var cat = custom ? resolveCategoryFromInputs(document.getElementById("pf_customCat"), document.getElementById("pf_customCatInput")) : FOOD_BY_KEY[foodKey].cat;
     lastPantrySubmitAt = now;
     var barcodeChanged = false;
     if(pendingBarcode){
@@ -2619,6 +2691,12 @@ function renderPantry(){
       runReceiptAnalysis(file);
     });
   }
+  el.querySelectorAll(".ri-cat").forEach(function(sel){
+    sel.addEventListener("change", function(){
+      var wrap = sel.closest(".receipt-row").querySelector(".ri-customCatWrap");
+      if(wrap) wrap.style.display = sel.value==="__custom_cat" ? "" : "none";
+    });
+  });
   var receiptCancelBtn = document.getElementById("receiptCancelBtn");
   if(receiptCancelBtn){
     receiptCancelBtn.addEventListener("click", function(){
@@ -2636,7 +2714,7 @@ function renderPantry(){
         if(!use) return;
         var name = (row.querySelector(".ri-name").value||"").trim();
         if(!name) return;
-        var cat = row.querySelector(".ri-cat").value;
+        var cat = resolveCategoryFromInputs(row.querySelector(".ri-cat"), row.querySelector(".ri-customCat"));
         var qty = parseFloat(row.querySelector(".ri-qty").value)||0;
         var unit = row.querySelector(".ri-unit").value;
         var expiry = row.querySelector(".ri-expiry").value;
@@ -3024,13 +3102,14 @@ function renderSettings(){
             return '<div class="row-item" data-code="'+code+'" style="flex-direction:column;align-items:stretch;gap:8px">'
               + '<div class="field"><label>商品名</label><input type="text" class="bh-name" value="'+escapeAttr(b.name||"")+'"></div>'
               + '<div class="field-row">'
-              +   '<div class="field"><label>カテゴリ</label><select class="bh-cat">'+ Object.keys(CAT_LABEL).map(function(k){ return '<option value="'+k+'"'+(b.category===k?" selected":"")+'>'+CAT_LABEL[k]+'</option>'; }).join("") +'</select></div>'
+              +   '<div class="field"><label>カテゴリ</label><select class="bh-cat">'+ categoryOptionsHtml(b.category) +'</select></div>'
               +   '<div class="field"><label>単位</label><select class="bh-unit">'+ PANTRY_VALID_UNITS.map(function(u){ return '<option value="'+u+'"'+(b.unit===u?" selected":"")+'>'+u+'</option>'; }).join("") +'</select></div>'
               + '</div>'
+              + '<div class="field bh-customCatWrap" style="display:none"><label>新しいカテゴリ名</label><input type="text" class="bh-customCat" placeholder="例：飲料" maxlength="20"></div>'
               + '<div class="form-actions"><button type="button" class="btn ghost small bh-cancel" data-code="'+code+'">キャンセル</button><button type="button" class="btn small bh-save" data-code="'+code+'">保存</button></div>'
               + '</div>';
           }
-          var catLabel = CAT_LABEL[b.category] || "未設定";
+          var catLabel = catDisplayLabel(b.category);
           var nutritionNote = b.nutrition100 ? " ・ 栄養情報あり" : "";
           return '<div class="row-item" data-code="'+code+'">'
             + '<div class="main"><div class="name">'+escapeAttr(b.name||"(名称未設定)")+'</div><div class="meta">JAN: '+escapeAttr(code)+' ・ '+catLabel+' ・ '+escapeAttr(b.unit||"-")+nutritionNote+'</div></div>'
@@ -3151,13 +3230,19 @@ function renderSettings(){
       renderSettings();
     });
   });
+  el.querySelectorAll(".bh-cat").forEach(function(sel){
+    sel.addEventListener("change", function(){
+      var wrap = sel.closest(".row-item").querySelector(".bh-customCatWrap");
+      if(wrap) wrap.style.display = sel.value==="__custom_cat" ? "" : "none";
+    });
+  });
   el.querySelectorAll(".bh-save").forEach(function(btn){
     btn.addEventListener("click", function(){
       var code = btn.dataset.code;
       var row = btn.closest(".row-item");
       var name = (row.querySelector(".bh-name").value||"").trim();
       if(!name) return;
-      var cat = row.querySelector(".bh-cat").value;
+      var cat = resolveCategoryFromInputs(row.querySelector(".bh-cat"), row.querySelector(".bh-customCat"));
       var unit = row.querySelector(".bh-unit").value;
       var oldName = state.barcodes[code] ? state.barcodes[code].name : null;
       state.barcodes[code] = Object.assign({}, state.barcodes[code], { name: name, category: cat, unit: unit });
