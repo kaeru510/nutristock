@@ -1134,7 +1134,7 @@ function toggleFavoriteDish(dish){
     state.favoriteDishes.splice(idx,1);
   } else {
     var saved = Object.assign({}, dish);
-    delete saved.imageDataUrl; delete saved.imageLoading; delete saved.imageAttempted; delete saved.detailOpen;
+    delete saved.imageDataUrl; delete saved.imageLoading; delete saved.imageAttempted; delete saved.imageAttemptNum; delete saved.detailOpen;
     if(saved.recipe && saved.recipe.status==="loading") delete saved.recipe; /* mid-fetch when favorited — nothing left to resolve it, so drop rather than persist a stuck spinner */
     saved.savedAt = Date.now();
     state.favoriteDishes.unshift(saved);
@@ -1172,6 +1172,19 @@ function runQueuedPollinationsRequest(fn){
   return run;
 }
 
+/* Bounded retry-with-backoff (added 2026-09-19, user's compromise idea): instead of retrying
+   forever until success — which would hide how long it's actually taking and, worse, would
+   mean hammering a free shared community resource with automated repeat requests whenever
+   ① (the shared per-minute rate limit) is the cause, which is bad citizenship on a free
+   service and something most APIs would consider abuse — try up to 3 times total, waiting
+   30s between attempts. 30s is deliberately long: fast retries right after a failure were
+   already shown to just bounce off the still-occupied per-IP slot from ②/③ (see NOTES.md);
+   a real gap gives that slot an actual chance to clear. The user keeps full visibility (the
+   congestion banner stays, and the loading hint below shows which attempt this is) rather
+   than the app silently spinning with no explanation for minutes. */
+var POLLINATIONS_MAX_ATTEMPTS = 3;
+var POLLINATIONS_RETRY_DELAY_SEC = 30;
+
 /* Triggered per-dish by the manual "🎨 画像を生成" / "🔄 別の画像に" / "🎨 再試行" button (see
    the imageBtn markup in renderHome). Automatic generation for every suggested dish was
    tried and then reverted 2026-09-19 — see generateAllSuggestedDishImages below and
@@ -1183,6 +1196,7 @@ async function generateImageForSuggestedDish(idx){
   var d = aiSuggestUi.dishes[idx];
   if(!d || d.imageLoading) return;
   d.imageLoading = true;
+  d.imageAttemptNum = 1;
   renderHome();
   /* Flux (the model behind Pollinations.ai) is trained mostly on English captions and
      largely ignores a Japanese dish name — tested live, two completely different dishes
@@ -1194,19 +1208,30 @@ async function generateImageForSuggestedDish(idx){
      existed. */
   var visual = d.imagePromptEn || ("a Japanese home-cooked dish called \""+d.name+"\"");
   var prompt = "A professional, appetizing food photograph of " + visual + ", beautifully plated on a clean dinner table, natural lighting, realistic food photography style, no text or logos in the image.";
-  /* Timestamped start/end markers (added 2026-09-19) so the queue's non-overlap claim can be
-     checked directly from a pasted console log instead of taken on faith: "投入" is just when
-     this dish entered the queue (can legitimately overlap with others waiting their turn),
-     but "実行開始"→"実行終了" brackets the actual fetch() — if the serialization is working,
-     no two dishes' 実行開始/実行終了 windows should ever overlap in the timestamps. */
-  console.log("[NutriStock] 画像生成: キュー投入 idx="+idx+" "+new Date().toISOString());
-  var url = await runQueuedPollinationsRequest(function(){
-    console.log("[NutriStock] 画像生成: 実行開始 idx="+idx+" "+new Date().toISOString());
-    return generateDishImageDataUrl(prompt).then(function(u){
-      console.log("[NutriStock] 画像生成: 実行終了 idx="+idx+" "+new Date().toISOString()+" 結果="+(u?"成功":"失敗"));
-      return u;
+  var url = null;
+  for(var attempt=1; attempt<=POLLINATIONS_MAX_ATTEMPTS; attempt++){
+    d.imageAttemptNum = attempt;
+    if(attempt>1) renderHome();
+    /* Timestamped start/end markers (added 2026-09-19) so the queue's non-overlap claim can
+       be checked directly from a pasted console log instead of taken on faith: "投入" is
+       just when this dish entered the queue (can legitimately overlap with others waiting
+       their turn), but "実行開始"→"実行終了" brackets the actual fetch() — if the
+       serialization is working, no two dishes' 実行開始/実行終了 windows should ever
+       overlap in the timestamps. */
+    console.log("[NutriStock] 画像生成: キュー投入 idx="+idx+" 試行"+attempt+"/"+POLLINATIONS_MAX_ATTEMPTS+" "+new Date().toISOString());
+    url = await runQueuedPollinationsRequest(function(){
+      console.log("[NutriStock] 画像生成: 実行開始 idx="+idx+" "+new Date().toISOString());
+      return generateDishImageDataUrl(prompt).then(function(u){
+        console.log("[NutriStock] 画像生成: 実行終了 idx="+idx+" "+new Date().toISOString()+" 結果="+(u?"成功":"失敗"));
+        return u;
+      });
     });
-  });
+    if(url) break;
+    if(attempt < POLLINATIONS_MAX_ATTEMPTS){
+      console.log("[NutriStock] 画像生成: "+POLLINATIONS_RETRY_DELAY_SEC+"秒待って再試行 idx="+idx+" "+new Date().toISOString());
+      await new Promise(function(r){ setTimeout(r, POLLINATIONS_RETRY_DELAY_SEC*1000); });
+    }
+  }
   d.imageLoading = false;
   d.imageDataUrl = url;
   d.imageAttempted = true;
@@ -1769,8 +1794,8 @@ function renderHome(){
         }).join("");
         var imageBlock = d.imageDataUrl
           ? '<img src="'+d.imageDataUrl+'" style="width:100%;border-radius:10px;margin-bottom:8px;display:block">'
-          : (d.imageLoading ? '<div class="hint" style="margin-bottom:6px">🎨 画像を生成中…</div>'
-            : (d.imageAttempted ? '<div class="hint" style="margin-bottom:6px;color:var(--crit)">画像を生成できませんでした</div>' : ''));
+          : (d.imageLoading ? '<div class="hint" style="margin-bottom:6px">🎨 画像を生成中…（'+(d.imageAttemptNum||1)+'/'+POLLINATIONS_MAX_ATTEMPTS+'回目）</div>'
+            : (d.imageAttempted ? '<div class="hint" style="margin-bottom:6px;color:var(--crit)">画像を生成できませんでした（'+POLLINATIONS_MAX_ATTEMPTS+'回試行）</div>' : ''));
         var imageBtn = (imageGenEnabled && !d.imageLoading)
           ? '<button type="button" class="btn ghost small ai-suggest-img-btn" data-idx="'+idx+'">'+(d.imageDataUrl?"🔄 別の画像に":(d.imageAttempted?"🎨 再試行":"🎨 画像を生成"))+'</button>'
           : '';
