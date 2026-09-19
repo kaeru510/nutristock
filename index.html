@@ -164,7 +164,12 @@
   .ingredient-row .ing-name{flex:1.2;min-width:80px;padding:5px 7px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;color:inherit}
   .ingredient-row .ing-qty{width:56px;flex-shrink:0;padding:5px 6px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-variant-numeric:tabular-nums;color:inherit}
   .ingredient-row .ing-unit{font-size:11px;color:var(--ink-3);flex-shrink:0}
-  .ingredient-row .ing-link{flex:1.6;min-width:120px;padding:5px 7px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:12px;color:inherit}
+  /* Was a <select> listing every pantry item; simplified 2026-09-19 (user's request) to a
+     single link/don't-link checkbox against whichever pantry item the AI already matched —
+     see ingredientRowHtml. */
+  .ingredient-row .ing-link-wrap{flex:1.6;min-width:140px;display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-2)}
+  .ingredient-row .ing-link{flex-shrink:0;width:15px;height:15px;accent-color:var(--accent)}
+  .ingredient-row .ing-link-none{flex:1.6;min-width:120px;font-size:12px;color:var(--ink-3)}
   .ingredient-row .ing-remove{flex-shrink:0;border:none;background:transparent;color:var(--ink-3);font-size:17px;line-height:1;cursor:pointer;padding:0 3px}
   .ingredient-row .ing-remove:hover{color:var(--crit)}
   .ing-add-btn{margin-top:2px}
@@ -844,21 +849,24 @@ function geminiPhotoItemsFromResponseText(text, validPantryIds){
   });
 }
 
+/* Was a <select> listing every single pantry item (regardless of relevance), forcing the
+   user to hunt through the whole inventory to manually confirm or fix what the AI already
+   attempted to match. Simplified 2026-09-19 (user's request: "just let me choose link or
+   don't link") to trust the AI's own matchedPantryId — the extraction prompt already tells
+   it to leave this null when unsure or when nothing in the pantry fits, so there's nothing
+   meaningful left to manually search for in that case; "在庫がありません" says so directly
+   instead of showing an empty/unhelpful dropdown. */
 function ingredientRowHtml(ing){
-  var pantryOptions = state.pantry.length ? (
-    '<select class="ing-link">'
-    + '<option value="">紐づけない</option>'
-    + state.pantry.map(function(p){
-        return '<option value="'+p.id+'"'+(ing.matchedPantryId===p.id?" selected":"")+'>'+escapeAttr(p.name)+'（在庫'+p.qty+p.unit+'）</option>';
-      }).join("")
-    + '</select>'
-  ) : "";
+  var matched = ing.matchedPantryId ? state.pantry.find(function(p){ return p.id===ing.matchedPantryId; }) : null;
+  var linkHtml = matched
+    ? '<label class="ing-link-wrap"><input type="checkbox" class="ing-link" checked data-pantry-id="'+matched.id+'"> 紐づける（在庫: '+escapeAttr(matched.name)+' '+matched.qty+matched.unit+'）</label>'
+    : '<span class="ing-link-none">在庫がありません</span>';
   return '<div class="ingredient-row">'
     + '<input type="checkbox" class="ing-use" checked>'
     + '<input type="text" class="ing-name" value="'+escapeAttr(ing.name||"")+'" placeholder="材料名">'
     + '<input type="number" class="ing-qty" value="'+Math.round(ing.estimatedGrams||0)+'" min="0" step="1">'
     + '<span class="ing-unit">g</span>'
-    + pantryOptions
+    + linkHtml
     + '<button type="button" class="ing-remove" title="削除">×</button>'
     + '</div>';
 }
@@ -3007,8 +3015,8 @@ function renderMeals(){
             var ingName = (ingRow.querySelector(".ing-name").value||"").trim();
             var ingQty = parseFloat(ingRow.querySelector(".ing-qty").value)||0;
             if(ingName) usedIngredients.push({ name: ingName, estimatedGrams: ingQty });
-            var linkSel = ingRow.querySelector(".ing-link");
-            var pantryId = linkSel ? linkSel.value : "";
+            var linkCheckbox = ingRow.querySelector(".ing-link");
+            var pantryId = (linkCheckbox && linkCheckbox.checked) ? linkCheckbox.dataset.pantryId : "";
             if(!pantryId) return;
             var stock = state.pantry.find(function(p){ return p.id===pantryId; });
             if(stock){ deductPantryForConsumption(stock, ingQty); pantryChanged = true; }
