@@ -1113,7 +1113,19 @@ async function generateImageForSuggestedDish(idx){
      existed. */
   var visual = d.imagePromptEn || ("a Japanese home-cooked dish called \""+d.name+"\"");
   var prompt = "A professional, appetizing food photograph of " + visual + ", beautifully plated on a clean dinner table, natural lighting, realistic food photography style, no text or logos in the image.";
-  var url = await runQueuedPollinationsRequest(function(){ return generateDishImageDataUrl(prompt); });
+  /* Timestamped start/end markers (added 2026-09-19) so the queue's non-overlap claim can be
+     checked directly from a pasted console log instead of taken on faith: "投入" is just when
+     this dish entered the queue (can legitimately overlap with others waiting their turn),
+     but "実行開始"→"実行終了" brackets the actual fetch() — if the serialization is working,
+     no two dishes' 実行開始/実行終了 windows should ever overlap in the timestamps. */
+  console.log("[NutriStock] 画像生成: キュー投入 idx="+idx+" "+new Date().toISOString());
+  var url = await runQueuedPollinationsRequest(function(){
+    console.log("[NutriStock] 画像生成: 実行開始 idx="+idx+" "+new Date().toISOString());
+    return generateDishImageDataUrl(prompt).then(function(u){
+      console.log("[NutriStock] 画像生成: 実行終了 idx="+idx+" "+new Date().toISOString()+" 結果="+(u?"成功":"失敗"));
+      return u;
+    });
+  });
   d.imageLoading = false;
   d.imageDataUrl = url;
   d.imageAttempted = true;
