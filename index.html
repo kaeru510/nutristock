@@ -906,6 +906,24 @@ async function checkPollinationsHealth(){
   }
 }
 
+/* Keeps the congestion banner live while suggestions with imageGenEnabled are on screen
+   (added 2026-09-19, user asked for real-time updates instead of a one-off check). Polls
+   every 60s — matching the status feed's own Cache-Control max-age, so polling faster would
+   just re-fetch the same cached snapshot. Skips the actual fetch while the tab/screen is
+   backgrounded (document.hidden) to avoid spending battery/data on a check nobody can see.
+   Always stopped and restarted together as a pair — see call sites in runAiSuggestions. */
+var pollinationsHealthTimer = null;
+function startPollinationsHealthPolling(){
+  stopPollinationsHealthPolling();
+  pollinationsHealthTimer = setInterval(function(){
+    if(document.hidden) return;
+    checkPollinationsHealth().then(function(h){ aiSuggestUi.pollinationsHealth = h; renderHome(); });
+  }, 60000);
+}
+function stopPollinationsHealthPolling(){
+  if(pollinationsHealthTimer){ clearInterval(pollinationsHealthTimer); pollinationsHealthTimer = null; }
+}
+
 async function generateDishImageDataUrl(promptText){
   /* Pollinations returns the exact same image for the exact same prompt when no seed is
      given (confirmed live: identical bytes on repeated identical requests) — without this,
@@ -1249,6 +1267,7 @@ async function fetchRecipeForDish(source, idx){
 }
 
 async function runAiSuggestions(){
+  stopPollinationsHealthPolling();
   if(!hasGeminiKey()){
     aiSuggestUi.status = "error";
     aiSuggestUi.error = "設定タブでGemini APIキーを登録してください。";
@@ -1293,6 +1312,7 @@ async function runAiSuggestions(){
   if(imageGenEnabled && aiSuggestUi.dishes.length){
     generateAllSuggestedDishImages();
     checkPollinationsHealth().then(function(h){ aiSuggestUi.pollinationsHealth = h; renderHome(); });
+    startPollinationsHealthPolling();
   }
 }
 
