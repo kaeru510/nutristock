@@ -2955,38 +2955,55 @@ function renderSettings(){
     +   '</div>'
     +   '<div class="field-row">'
     +     '<div class="field"><label>身長 (cm)</label><input id="pr_height" type="number" min="100" max="230" value="'+p.height+'"></div>'
-    +     '<div class="field"><label>体重 (kg)</label><input id="pr_weight" type="number" min="30" max="200" step="0.1" value="'+p.weight+'"></div>'
+    +     (function(){
+          /* Absorbs the old standalone "体重ログ" card (removed 2026-09-19, user's request
+             — it was a duplicate entry point for the same value already editable here).
+             Saving the profile now also logs today's weight into state.weights, so the
+             trend note below keeps working without a separate form. */
+          var trend = weightTrend();
+          var trendNote = trend ? '<div class="hint" style="margin-top:4px">直近'+trend.days+'日間で '+(trend.delta>0?"+":"")+trend.delta+'kg</div>' : '';
+          return '<div class="field"><label>体重 (kg)</label><input id="pr_weight" type="number" min="30" max="200" step="0.1" value="'+p.weight+'">'+trendNote+'</div>';
+        })()
     +   '</div>'
     +   '<div class="field"><label>活動量</label><select id="pr_activity">'
     +      ACTIVITY_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(p.activity===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
     +   '</select></div>'
     +   (function(){
-        var isPreset = PROTEIN_GOAL_OPTIONS.some(function(o){ return o.v===p.proteinPerKg; });
-        return '<div class="field"><label>たんぱく質の目標</label><select id="pr_ppk_goal">'
-          + PROTEIN_GOAL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(p.proteinPerKg===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
-          + '<option value="__custom"'+(isPreset?"":" selected")+'>カスタム（数値を直接指定）</option>'
+        /* Renamed from "たんぱく質の目標" (2026-09-19, user's request): "カスタム" used to
+           only let you override the protein-per-kg coefficient that feeds calcTargets — the
+           other 5 numbers (kcal/fat/carb/fiber/salt) stayed formula-only unless edited in
+           the separate "現在の栄養目標" card below (now read-only, see there). Custom mode
+           now means "skip the formula, I'll set every number myself" — merging that card's
+           editing capability in here, where the user expects to find it. An explicit
+           targetMode flag (not "does proteinPerKg match a preset") tracks which mode is
+           active, since in custom mode proteinPerKg no longer drives anything. */
+        var isCustom = p.targetMode === "custom";
+        var base = t || calcTargets(p);
+        return '<div class="field"><label>栄養目標</label><select id="pr_goal_mode">'
+          + PROTEIN_GOAL_OPTIONS.map(function(o){ return '<option value="'+o.v+'"'+(!isCustom && p.proteinPerKg===o.v?" selected":"")+'>'+o.label+'</option>'; }).join("")
+          + '<option value="__custom"'+(isCustom?" selected":"")+'>カスタム（栄養目標を直接指定）</option>'
           + '</select></div>'
-          + '<div class="field" id="pr_ppk_customWrap" style="'+(isPreset?"display:none":"")+'"><label>係数 (g / 体重kg)</label><input id="pr_ppk" type="number" min="0.6" max="2.5" step="0.1" value="'+p.proteinPerKg+'"></div>';
+          + '<div class="field-row" id="pr_customTargets" style="'+(isCustom?"":"display:none")+'">'
+          +   Object.keys(NUTRIENT_LABEL).map(function(k){
+                return '<div class="field"><label>'+NUTRIENT_LABEL[k]+' ('+NUTRIENT_UNIT[k]+')</label><input class="pr_tgt" data-key="'+k+'" type="number" step="1" value="'+base[k]+'"></div>';
+              }).join("")
+          + '</div>';
       })()
     +   '<div class="form-actions"><button type="submit" class="btn">目標を計算して保存</button></div>'
     + '</form>'
     + '</div>'
-    + (function(){
-        var trend = weightTrend();
-        var latestDate = Object.keys(state.weights||{}).sort().slice(-1)[0];
-        var latestWeight = latestDate ? state.weights[latestDate] : p.weight;
-        return '<div class="card"><div class="card-head"><h2>体重ログ</h2></div><div class="sub">記録すると、この体重をもとに栄養目標も自動で再計算されます</div>'
-          + '<form id="weightForm" class="quick-form"><input id="weightInput" type="number" min="20" max="300" step="0.1" inputmode="decimal" placeholder="例：65.0" value="'+(latestWeight||"")+'"><button type="submit" class="btn small">記録</button></form>'
-          + (trend ? '<div class="note" style="margin-top:8px">直近'+trend.days+'日間で '+(trend.delta>0?"+":"")+trend.delta+'kg（'+latestWeight+'kg）</div>' : (latestDate ? '<div class="note" style="margin-top:8px">最終記録：'+latestDate+'（'+latestWeight+'kg）</div>' : ''))
-          + '</div>';
-      })()
     + (t ? (
-      '<div class="card"><div class="card-head"><h2>現在の栄養目標</h2></div><div class="sub">1日あたり・必要に応じて数値を直接調整できます</div>'
-      + '<form id="targetForm" class="inline"><div class="field-row">'
+      /* Read-only summary (2026-09-19, user's request): confirmed that saving the profile
+         form already persists state.targets — this card was previously ALSO independently
+         editable via its own form, which was confusing since it implied the numbers weren't
+         "real" until saved again here. Editing now happens only in Profile's custom mode
+         above; this card is purely a display of whatever was last saved. */
+      '<div class="card"><div class="card-head"><h2>現在の栄養目標</h2></div><div class="sub">1日あたり（プロフィールを保存すると更新されます）</div>'
+      + '<div class="field-row">'
       + Object.keys(NUTRIENT_LABEL).map(function(k){
-          return '<div class="field"><label>'+NUTRIENT_LABEL[k]+' ('+NUTRIENT_UNIT[k]+')</label><input class="tgt" data-key="'+k+'" type="number" step="1" value="'+t[k]+'"></div>';
+          return '<div class="field"><label>'+NUTRIENT_LABEL[k]+' ('+NUTRIENT_UNIT[k]+')</label><div style="padding:9px 2px;font-size:15px;font-weight:700">'+t[k]+'</div></div>';
         }).join("")
-      + '</div><div class="form-actions"><button type="submit" class="btn secondary">目標値を保存</button></div></form></div>'
+      + '</div></div>'
     ) : '')
     + '<div class="disclaimer">目標値は Mifflin-St Jeor 式などをもとにした簡易的な概算です。医療的な指導が必要な場合は専門家にご相談ください。食品成分値は日本食品標準成分表に基づく概算値を使用しています。</div>';
 
@@ -3027,57 +3044,40 @@ function renderSettings(){
     renderSettings();
   });
 
-  document.getElementById("pr_ppk_goal").addEventListener("change", function(){
-    document.getElementById("pr_ppk_customWrap").style.display = this.value==="__custom" ? "" : "none";
+  document.getElementById("pr_goal_mode").addEventListener("change", function(){
+    document.getElementById("pr_customTargets").style.display = this.value==="__custom" ? "" : "none";
   });
 
   document.getElementById("profileForm").addEventListener("submit", function(e){
     e.preventDefault();
-    var goalVal = document.getElementById("pr_ppk_goal").value;
-    var proteinPerKg = goalVal==="__custom"
-      ? (parseFloat(document.getElementById("pr_ppk").value)||1.2)
-      : parseFloat(goalVal);
+    var goalVal = document.getElementById("pr_goal_mode").value;
+    var isCustom = goalVal === "__custom";
     var profile = {
       sex: document.getElementById("pr_sex").value,
       age: parseFloat(document.getElementById("pr_age").value)||30,
       height: parseFloat(document.getElementById("pr_height").value)||170,
       weight: parseFloat(document.getElementById("pr_weight").value)||65,
       activity: parseFloat(document.getElementById("pr_activity").value)||1.375,
-      proteinPerKg: proteinPerKg
+      /* In custom mode proteinPerKg no longer drives anything (targets are set directly
+         below) — keep whatever was last known so a later switch back to a preset has a
+         sane starting point instead of resetting to a hardcoded default. */
+      proteinPerKg: isCustom ? (state.profile ? state.profile.proteinPerKg : 1.2) : parseFloat(goalVal),
+      targetMode: isCustom ? "custom" : "preset"
     };
     state.profile = profile;
-    state.targets = calcTargets(profile);
-    persist(["profile","targets"]); renderAll();
-  });
-
-  var weightForm = document.getElementById("weightForm");
-  if(weightForm){
-    weightForm.addEventListener("submit", function(e){
-      e.preventDefault();
-      var v = parseFloat(document.getElementById("weightInput").value);
-      if(!v || v<=0) return;
-      state.weights = state.weights || {};
-      state.weights[todayStr()] = v;
-      var changedFields = ["weights"];
-      if(state.profile){
-        state.profile = Object.assign({}, state.profile, { weight: v });
-        state.targets = calcTargets(state.profile);
-        changedFields.push("profile", "targets");
-      }
-      persist(changedFields); renderAll();
-    });
-  }
-
-  var tf = document.getElementById("targetForm");
-  if(tf){
-    tf.addEventListener("submit", function(e){
-      e.preventDefault();
-      var newTargets = Object.assign({}, state.targets);
-      el.querySelectorAll(".tgt").forEach(function(inp){ newTargets[inp.dataset.key] = parseFloat(inp.value)||0; });
+    if(isCustom){
+      var newTargets = {};
+      el.querySelectorAll(".pr_tgt").forEach(function(inp){ newTargets[inp.dataset.key] = parseFloat(inp.value)||0; });
       state.targets = newTargets;
-      persist(["targets"]); renderAll();
-    });
-  }
+    } else {
+      state.targets = calcTargets(profile);
+    }
+    /* Replaces the old standalone weightForm's logging so the trend note under 体重(kg)
+       keeps working without a separate form (see NOTES.md). */
+    state.weights = state.weights || {};
+    state.weights[todayStr()] = profile.weight;
+    persist(["profile","targets","weights"]); renderAll();
+  });
 }
 
 /* ---------- render all ---------- */
