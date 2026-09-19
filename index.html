@@ -3030,7 +3030,7 @@ function renderSettings(){
             + '<button type="button" class="btn ghost small bh-delete" data-code="'+code+'">🗑</button>'
             + '</div>';
         }).join("") : '<div class="empty"><div class="glyph">📷</div><p>まだ登録されたバーコードがありません。</p></div>';
-        return '<div class="card"><div class="card-head"><h2>バーコード履歴</h2></div><div class="sub">一度スキャンした商品の名前・カテゴリ・単位を編集できます（次回スキャン時の自動入力に反映されます。既にパントリーに追加済みの在庫は変更されません）</div>'
+        return '<div class="card"><div class="card-head"><h2>バーコード履歴</h2></div><div class="sub">一度スキャンした商品の名前・カテゴリ・単位を編集できます（次回スキャン時の自動入力・「最近使った食材」に反映されます。既にパントリーに追加済みの在庫は変更されません）</div>'
           + '<div class="list">'+rows+'</div></div>';
       })()
     + '<div class="card">'
@@ -3151,9 +3151,23 @@ function renderSettings(){
       if(!name) return;
       var cat = row.querySelector(".bh-cat").value;
       var unit = row.querySelector(".bh-unit").value;
+      var oldName = state.barcodes[code] ? state.barcodes[code].name : null;
       state.barcodes[code] = Object.assign({}, state.barcodes[code], { name: name, category: cat, unit: unit });
+      /* Keep "最近使った食材" in sync (2026-09-19, user's request) — it's matched by name
+         only (pushRecentFood dedupes on name, no barcode link stored there), so an edit
+         here would otherwise leave a stale chip with the old name/category/unit behind. */
+      var changedFields = ["barcodes"];
+      if(oldName){
+        var recentMatch = (state.recentFoods||[]).find(function(r){ return r.name === oldName; });
+        if(recentMatch){
+          recentMatch.name = name;
+          recentMatch.category = cat;
+          recentMatch.unit = unit;
+          changedFields.push("recentFoods");
+        }
+      }
       barcodeHistoryUi.editingCode = null;
-      persist(["barcodes"]);
+      persist(changedFields);
       showToast("バーコード情報を保存しました");
       renderSettings();
     });
