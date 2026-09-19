@@ -1078,6 +1078,21 @@ function logDishAsMeal(d){
   renderAll();
 }
 
+/* App-wide serialization queue for Pollinations requests. Pollinations enforces "max 1
+   in-flight request per IP" (see NOTES.md) — the automatic per-dish loop already awaits
+   each dish in turn, but that alone doesn't stop a manual "🎨 再試行" tap on a DIFFERENT
+   dish from firing while the auto loop is still mid-flight on another one, which would
+   genuinely violate the same-IP concurrency limit and trigger the same "Queue full" 429.
+   Routing every call through this single chained promise makes the whole app — auto loop
+   and manual button alike — share one strict FIFO queue, so at most one Pollinations
+   request is ever in flight no matter where it was triggered from. */
+var pollinationsQueue = Promise.resolve();
+function runQueuedPollinationsRequest(fn){
+  var run = pollinationsQueue.then(fn, fn);
+  pollinationsQueue = run.then(function(){}, function(){});
+  return run;
+}
+
 /* Runs automatically for every dish right after a suggestion batch loads (when
    imageGenEnabled), via generateAllSuggestedDishImages() below — also reused for the
    manual "🔄 別の画像に" / "🎨 再試行" button on a single dish. Pollinations.ai is free and
@@ -1098,7 +1113,7 @@ async function generateImageForSuggestedDish(idx){
      existed. */
   var visual = d.imagePromptEn || ("a Japanese home-cooked dish called \""+d.name+"\"");
   var prompt = "A professional, appetizing food photograph of " + visual + ", beautifully plated on a clean dinner table, natural lighting, realistic food photography style, no text or logos in the image.";
-  var url = await generateDishImageDataUrl(prompt);
+  var url = await runQueuedPollinationsRequest(function(){ return generateDishImageDataUrl(prompt); });
   d.imageLoading = false;
   d.imageDataUrl = url;
   d.imageAttempted = true;
