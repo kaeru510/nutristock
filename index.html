@@ -1886,7 +1886,16 @@ function renderHome(){
           +   imageBtn
           + '</div>'
           + '</div></div>';
-      }).join("") + '</div>';
+      }).join("") + '</div>'
+        /* Re-run button at the BOTTOM of the results too (added 2026-09-19, user's report:
+           the trigger button at the top of the card is easy to lose track of once 4 dishes
+           with images push the card well past a screen's height — scrolling all the way
+           back up just to try again is real friction). Reuses whichever mode/ingredients/
+           dish count are currently selected; hidden while a batch is still running so it
+           can't be tapped mid-generation. */
+        + (!aiSuggestUi.imageGenBatchInProgress
+          ? '<div class="form-actions" style="justify-content:flex-start;margin-top:14px"><button type="button" id="aiSuggestAgainBtn" class="btn ghost small">🔁 もう一度提案してもらう</button></div>'
+          : '');
     } else {
       aiBody = aiSuggestUi.mode==="pantry"
         ? '<div class="hint" style="margin-top:10px">ボタンを押すと、在庫（特に賞味期限が近い食材）から作れる料理をAIが提案します。</div>'
@@ -2030,6 +2039,10 @@ function renderHome(){
   var aiDishCountSelect = document.getElementById("aiDishCountSelect");
   if(aiDishCountSelect) aiDishCountSelect.addEventListener("change", function(){
     aiSuggestUi.dishCount = parseInt(aiDishCountSelect.value, 10) || 4;
+  });
+  var aiSuggestAgainBtn = document.getElementById("aiSuggestAgainBtn");
+  if(aiSuggestAgainBtn) aiSuggestAgainBtn.addEventListener("click", function(){
+    if(aiSuggestUi.mode==="pantry") runAiSuggestions(); else runIngredientSuggestion();
   });
 
   el.querySelectorAll(".ai-suggest-log-btn").forEach(function(btn){
