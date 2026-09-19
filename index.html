@@ -2206,6 +2206,7 @@ function deductPantryForConsumption(stock, estimatedGrams){
 
 /* ---------- render: PANTRY ---------- */
 var pantryUi = { category: "all", search: "", expiryDays: null };
+var barcodeHistoryUi = { editingCode: null };
 var lastPantrySubmitAt = 0;
 var EXPIRY_FILTER_OPTIONS = [
   {v:"", label:"すべて"},
@@ -3000,6 +3001,38 @@ function renderSettings(){
           + '<div class="hint" style="margin-top:8px">設定手順はNOTES.mdの「期限切れ通知（iOSショートカット連携）」を参照してください。</div>'
           + '</div>';
       })()
+    + (function(){
+        /* Added 2026-09-19, user's request: a place to review/fix what got learned from
+           past barcode scans (state.barcodes — separate from the pantry itself, see
+           pantryForm's submit handler). Editing here only changes what auto-fills on the
+           NEXT scan of that barcode; it deliberately does not touch already-added pantry
+           items, which store their own copy of name/category/unit at add time. */
+        var codes = Object.keys(state.barcodes||{}).sort(function(a,b){
+          return (state.barcodes[a].name||"").localeCompare(state.barcodes[b].name||"", "ja");
+        });
+        var rows = codes.length ? codes.map(function(code){
+          var b = state.barcodes[code];
+          if(barcodeHistoryUi.editingCode === code){
+            return '<div class="row-item" data-code="'+code+'" style="flex-direction:column;align-items:stretch;gap:8px">'
+              + '<div class="field"><label>商品名</label><input type="text" class="bh-name" value="'+escapeAttr(b.name||"")+'"></div>'
+              + '<div class="field-row">'
+              +   '<div class="field"><label>カテゴリ</label><select class="bh-cat">'+ Object.keys(CAT_LABEL).map(function(k){ return '<option value="'+k+'"'+(b.category===k?" selected":"")+'>'+CAT_LABEL[k]+'</option>'; }).join("") +'</select></div>'
+              +   '<div class="field"><label>単位</label><select class="bh-unit">'+ PANTRY_VALID_UNITS.map(function(u){ return '<option value="'+u+'"'+(b.unit===u?" selected":"")+'>'+u+'</option>'; }).join("") +'</select></div>'
+              + '</div>'
+              + '<div class="form-actions"><button type="button" class="btn ghost small bh-cancel" data-code="'+code+'">キャンセル</button><button type="button" class="btn small bh-save" data-code="'+code+'">保存</button></div>'
+              + '</div>';
+          }
+          var catLabel = CAT_LABEL[b.category] || "未設定";
+          var nutritionNote = b.nutrition100 ? " ・ 栄養情報あり" : "";
+          return '<div class="row-item" data-code="'+code+'">'
+            + '<div class="main"><div class="name">'+escapeAttr(b.name||"(名称未設定)")+'</div><div class="meta">JAN: '+escapeAttr(code)+' ・ '+catLabel+' ・ '+escapeAttr(b.unit||"-")+nutritionNote+'</div></div>'
+            + '<button type="button" class="btn ghost small bh-edit" data-code="'+code+'">✎ 編集</button>'
+            + '<button type="button" class="btn ghost small bh-delete" data-code="'+code+'">🗑</button>'
+            + '</div>';
+        }).join("") : '<div class="empty"><div class="glyph">📷</div><p>まだ登録されたバーコードがありません。</p></div>';
+        return '<div class="card"><div class="card-head"><h2>バーコード履歴</h2></div><div class="sub">一度スキャンした商品の名前・カテゴリ・単位を編集できます（次回スキャン時の自動入力に反映されます。既にパントリーに追加済みの在庫は変更されません）</div>'
+          + '<div class="list">'+rows+'</div></div>';
+      })()
     + '<div class="card">'
     + '<div class="card-head"><h2>プロフィール</h2></div><div class="sub">身長・体重・年齢から基準の栄養目標を計算します</div>'
     + '<form id="profileForm" class="inline">'
@@ -3096,6 +3129,41 @@ function renderSettings(){
     }
     showToast("通知設定を保存しました");
     renderSettings();
+  });
+
+  el.querySelectorAll(".bh-edit").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      barcodeHistoryUi.editingCode = btn.dataset.code;
+      renderSettings();
+    });
+  });
+  el.querySelectorAll(".bh-cancel").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      barcodeHistoryUi.editingCode = null;
+      renderSettings();
+    });
+  });
+  el.querySelectorAll(".bh-save").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var code = btn.dataset.code;
+      var row = btn.closest(".row-item");
+      var name = (row.querySelector(".bh-name").value||"").trim();
+      if(!name) return;
+      var cat = row.querySelector(".bh-cat").value;
+      var unit = row.querySelector(".bh-unit").value;
+      state.barcodes[code] = Object.assign({}, state.barcodes[code], { name: name, category: cat, unit: unit });
+      barcodeHistoryUi.editingCode = null;
+      persist(["barcodes"]);
+      showToast("バーコード情報を保存しました");
+      renderSettings();
+    });
+  });
+  el.querySelectorAll(".bh-delete").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      delete state.barcodes[btn.dataset.code];
+      persist(["barcodes"]);
+      renderSettings();
+    });
   });
 
   document.getElementById("pr_goal_mode").addEventListener("change", function(){
