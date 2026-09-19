@@ -425,7 +425,7 @@ function hasGeminiKey(){ return !!geminiApiKey; }
 var imageGenEnabled = false;
 try{ imageGenEnabled = localStorage.getItem("nutristock_imageGenEnabled") === "1"; }catch(e){}
 var photoUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
-var aiSuggestUi = { status:"idle", dishes:[], error:"" };
+var aiSuggestUi = { status:"idle", dishes:[], error:"", pollinationsHealth:null };
 var receiptUi = { file:null, previewUrl:null, status:"idle", items:[], error:"" };
 
 /* ---------- local usage log (NOT Google's official quota — just what this app itself has sent) ---------- */
@@ -874,6 +874,38 @@ async function callGeminiText(promptText, opts){
    than left to the service default. One retry covers the rest of that occasional flakiness.
    Unlike everything else under "AI", this doesn't touch Gemini at all — no key needed,
    nothing to log to the Gemini usage panel. */
+
+/* Best-effort, non-blocking congestion check (added 2026-09-19, user's idea: know it's
+   congested before trying instead of after several failures). Pollinations publishes its
+   own cached (~60s TTL per its Cache-Control header, confirmed live) status feed at
+   gen.pollinations.ai/models/status — no auth, CORS-open. We look up "lykon/dreamshaper-8-lcm"
+   specifically: that's not documented anywhere as "the model behind the free image
+   endpoint" — it's what our OWN captured error payloads showed the anonymous "sana" alias
+   actually routes to (image.pollinations.ai/models currently lists only "sana" — flux isn't
+   even offered on this endpoint right now, unrelated to congestion). If Pollinations changes
+   that routing again this lookup will just silently stop matching (falls through to null,
+   no warning shown) — there's no API that documents the mapping, so it would need
+   re-deriving from a fresh error payload. Any failure here (network, shape change, timeout)
+   fails open: returns null, and the caller just skips the warning rather than blocking
+   generation on a health check that itself couldn't be confirmed. */
+async function checkPollinationsHealth(){
+  try{
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function(){ controller.abort(); }, 5000);
+    var res = await fetch("https://gen.pollinations.ai/models/status", { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if(!res.ok) return null;
+    var data = await res.json();
+    var row = (data.data || []).find(function(r){
+      return r.model === "lykon/dreamshaper-8-lcm" && r.is_rollup === 0;
+    });
+    if(!row || !row.total_requests) return null;
+    return { successRate: row.status_2xx / row.total_requests, totalRequests: row.total_requests };
+  }catch(e){
+    return null;
+  }
+}
+
 async function generateDishImageDataUrl(promptText){
   /* Pollinations returns the exact same image for the exact same prompt when no seed is
      given (confirmed live: identical bytes on repeated identical requests) — without this,
@@ -1229,7 +1261,7 @@ async function runAiSuggestions(){
     renderHome();
     return;
   }
-  aiSuggestUi.status = "loading"; aiSuggestUi.dishes = []; aiSuggestUi.error = "";
+  aiSuggestUi.status = "loading"; aiSuggestUi.dishes = []; aiSuggestUi.error = ""; aiSuggestUi.pollinationsHealth = null;
   renderHome();
   var pantrySorted = state.pantry.slice().sort(function(a,b){ return daysUntil(a.expiry)-daysUntil(b.expiry); });
   var pantryContext = pantrySorted.map(function(p){ return { id:p.id, name:p.name, qty:p.qty, unit:p.unit, daysUntilExpiry: daysUntil(p.expiry) }; });
@@ -1258,7 +1290,10 @@ async function runAiSuggestions(){
     aiSuggestUi.error = PHOTO_ERROR_MESSAGES.invalid_json;
   }
   renderHome();
-  if(imageGenEnabled && aiSuggestUi.dishes.length) generateAllSuggestedDishImages();
+  if(imageGenEnabled && aiSuggestUi.dishes.length){
+    generateAllSuggestedDishImages();
+    checkPollinationsHealth().then(function(h){ aiSuggestUi.pollinationsHealth = h; renderHome(); });
+  }
 }
 
 var RECEIPT_VALID_UNITS = ["g","ml","個","パック","本","枚","その他"];
@@ -1648,7 +1683,13 @@ function renderHome(){
     } else if(aiSuggestUi.status==="error"){
       aiBody = '<div class="hint" style="margin-top:10px;color:var(--crit)">'+aiSuggestUi.error+'</div>';
     } else if(aiSuggestUi.status==="done" && aiSuggestUi.dishes.length){
-      aiBody = '<div class="suggest-list" style="margin-top:10px">' + aiSuggestUi.dishes.map(function(d, idx){
+      var health = aiSuggestUi.pollinationsHealth;
+      var healthNote = (imageGenEnabled && health && health.successRate < 0.6)
+        ? '<div class="hint" style="margin-top:10px;color:var(--warn-ink);background:var(--warn-soft);padding:8px 12px;border-radius:10px">'
+          + '⚠️ 画像生成サービス(Pollinations.ai)が現在混雑しています（直近の成功率 約'+Math.round(health.successRate*100)+'%）。画像がうまく生成できないことがあります。'
+          + '</div>'
+        : '';
+      aiBody = healthNote + '<div class="suggest-list" style="margin-top:10px">' + aiSuggestUi.dishes.map(function(d, idx){
         var ingredientsHtml = (d.ingredients||[]).map(function(ing){
           var has = !!ing.matchedPantryId;
           var statusHtml = has
